@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # ── 1. PostgreSQL Database ────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: glovacrm_db_prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-glovacrm}
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d glovacrm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - glovacrm_net
+
+  # ── 2. Redis Cache & Queue ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: glovacrm_redis_prod
+    restart: always
+    volumes:
+      - redis_data_prod:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - glovacrm_net
+
+  # ── 3. Backend API ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: glovacrm_backend_prod
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-glovacrm}?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-glovacrm_super_secret_jwt_key_2026_production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-glovacrm_super_secret_refresh_key_2026_production}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      INSTAMOJO_API_KEY: ${INSTAMOJO_API_KEY:-}
+      INSTAMOJO_AUTH_TOKEN: ${INSTAMOJO_AUTH_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    networks:
+      - glovacrm_net
+
+  # ── 4. Frontend Web App ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: glovacrm_frontend_prod
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:5000/api}
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    networks:
+      - glovacrm_net
+
+volumes:
+  postgres_data_prod:
+  redis_data_prod:
+
+networks:
+  glovacrm_net:
+    driver: bridge
