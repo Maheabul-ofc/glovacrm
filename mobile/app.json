@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "GlovaCRM",
-    "slug": "glovacrm",
+    "slug": "glovacrm-dialer",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
