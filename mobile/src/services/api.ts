@@ -6,8 +6,19 @@ export const DEFAULT_BASE_URL = 'https://glovacrm-backend.onrender.com/api';
 
 const api = axios.create({
   baseURL: DEFAULT_BASE_URL,
-  timeout: 15000,
+  timeout: 60000, // 60s timeout for mobile networks & cloud cold starts
 });
+
+export const checkBackendHealth = async (): Promise<{ ok: boolean; message: string }> => {
+  try {
+    const baseUrl = api.defaults.baseURL || DEFAULT_BASE_URL;
+    const healthUrl = baseUrl.replace(/\/api\/?$/, '') + '/health';
+    const res = await axios.get(healthUrl, { timeout: 20000 });
+    return { ok: true, message: `Connected to Server: ${res.data?.message || 'GlovaCRM Online'}` };
+  } catch (err: any) {
+    return { ok: false, message: `Server error: ${err.message || 'Offline'}` };
+  }
+};
 
 // Load saved server URL on init
 export const initApiConfig = async (): Promise<string> => {

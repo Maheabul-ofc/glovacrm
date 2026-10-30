@@ -18,7 +18,7 @@ function MainTabs({ onLogout }: { onLogout: () => void }) {
   return (
     <NavigationContainer>
       <Tab.Navigator
-        initialRouteName="Dashboard"
+        initialRouteName="Portal"
         screenOptions={{
           headerStyle: {
             backgroundColor: '#1e293b',
