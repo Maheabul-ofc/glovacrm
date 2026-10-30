@@ -1,11 +1,25 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "sonner";
 import { Providers } from "./Providers";
 
+export const viewport: Viewport = {
+  themeColor: "#0d9488",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 export const metadata: Metadata = {
   title: "GlovaCRM | Modern Sales Workspace",
   description: "Manage your leads and campaigns with ease.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "GlovaCRM",
+  },
 };
 
 export default function RootLayout({

@@ -25,8 +25,8 @@ import {
 } from './src/services/callDetection';
 
 const STORAGE_KEY_SERVER_URL = 'glovacrm_server_url';
-// Default to Windows Mobile Hotspot IP
-const DEFAULT_WEB_URL = 'http://192.168.137.1:3000';
+// Default to live cloud deployment on Render
+const DEFAULT_WEB_URL = 'https://glovacrm-frontend.onrender.com';
 
 interface ActiveCallInfo {
   phone: string;
@@ -68,12 +68,13 @@ export default function App() {
     const loadUrl = async () => {
       try {
         const saved = await AsyncStorage.getItem(STORAGE_KEY_SERVER_URL);
-        if (saved) {
+        if (saved && !saved.includes('192.168.') && !saved.includes('localhost') && !saved.includes('127.0.0.1')) {
           setServerUrl(saved);
           setUrlInput(saved);
         } else {
           setServerUrl(DEFAULT_WEB_URL);
           setUrlInput(DEFAULT_WEB_URL);
+          await AsyncStorage.setItem(STORAGE_KEY_SERVER_URL, DEFAULT_WEB_URL);
         }
       } catch (err) {
         console.warn('Failed to load server URL from storage:', err);
