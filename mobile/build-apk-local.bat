@@ -1,52 +1,36 @@
 @echo off
-title GlovaCRM Android APK Builder (Local Gradle)
+title GlovaCRM Android APK Builder (Local Machine)
 color 0b
 
 echo ===================================================================
-echo        GlovaCRM Android Dialer - Local Gradle APK Builder
+echo        GlovaCRM Native Android APK Builder (Local Machine)
 echo ===================================================================
 echo.
 cd /d %~dp0
 
-echo [*] Step 1: Installing dependencies...
-call npm install
-if %ERRORLEVEL% NEQ 0 (
-    echo [X] Dependency installation failed.
-    pause
-    exit /b %ERRORLEVEL%
-)
+set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-17.0.20.101-hotspot"
+set "GRADLE_OPTS=-Djavax.net.ssl.trustStoreType=WINDOWS-ROOT"
+set "PATH=%JAVA_HOME%\bin;%PATH%"
 
+echo [*] Using JDK 17: %JAVA_HOME%
+echo [*] Compiling native Android APK with local Gradle...
 echo.
-echo [*] Step 2: Generating native Android gradle project...
-call npx expo prebuild --platform android --clean
-if %ERRORLEVEL% NEQ 0 (
-    echo [X] Prebuild failed.
-    pause
-    exit /b %ERRORLEVEL%
-)
 
-echo.
-echo [*] Step 3: Compiling Android APK with Gradle...
 cd android
-call gradlew.bat assembleRelease
+call .\gradlew.bat assembleDebug
 
 if %ERRORLEVEL% EQU 0 (
     echo.
+    echo [*] Copying APK to project root...
+    copy /Y "app\build\outputs\apk\debug\app-debug.apk" "..\..\GlovaCRM.apk"
+    echo.
     echo ===================================================================
-    echo [*] SUCCESS! Your APK is ready at:
-    echo     D:\GlovaDev\CRM\mobile\android\app\build\outputs\apk\release\app-release.apk
+    echo [*] SUCCESS! Your Android APK is ready at:
+    echo     D:\GlovaDev\CRM\GlovaCRM.apk
     echo ===================================================================
 ) else (
     echo.
-    echo [!] Gradle release build failed. Trying assembleDebug...
-    call gradlew.bat assembleDebug
-    if %ERRORLEVEL% EQU 0 (
-        echo.
-        echo ===================================================================
-        echo [*] SUCCESS! Debug APK is ready at:
-        echo     D:\GlovaDev\CRM\mobile\android\app\build\outputs\apk\debug\app-debug.apk
-        echo ===================================================================
-    )
+    echo [X] Build encountered an error. Check Gradle output above.
 )
 
 pause

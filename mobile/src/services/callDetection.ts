@@ -1,12 +1,7 @@
 import { Platform, PermissionsAndroid } from 'react-native';
 
-// Safe require for react-native-call-log (in case running in Expo Go or dev client without native linking)
+// Native call log reader placeholder (switched to foreground elapsed timer for stability)
 let CallLogs: any = null;
-try {
-  CallLogs = require('react-native-call-log');
-} catch (e) {
-  console.log('react-native-call-log not available in current environment');
-}
 
 export interface DetectedCallResult {
   found: boolean;

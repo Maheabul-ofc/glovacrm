@@ -27,6 +27,8 @@ dist/
 *.key
 *.mobileprovision
 *.orig.*
+*.apk
+*.aab
 
 # Logs
 npm-debug.log*
