@@ -17,12 +17,12 @@ echo [*] Compiling native Android APK with local Gradle...
 echo.
 
 cd android
-call .\gradlew.bat assembleDebug
+call .\gradlew.bat assembleRelease
 
 if %ERRORLEVEL% EQU 0 (
     echo.
-    echo [*] Copying APK to project root...
-    copy /Y "app\build\outputs\apk\debug\app-debug.apk" "..\..\GlovaCRM.apk"
+    echo [*] Copying standalone APK to project root...
+    copy /Y "app\build\outputs\apk\release\app-release.apk" "..\..\GlovaCRM.apk"
     echo.
     echo ===================================================================
     echo [*] SUCCESS! Your Android APK is ready at:
