@@ -7,7 +7,8 @@ async function handler(
   const { path } = await params;
   const targetPath = path.join('/');
   const searchParams = req.nextUrl.search;
-  const targetUrl = `http://127.0.0.1:5000/api/${targetPath}${searchParams}`;
+  const backendBaseUrl = (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
+  const targetUrl = `${backendBaseUrl}/api/${targetPath}${searchParams}`;
 
   try {
     const headers = new Headers(req.headers);

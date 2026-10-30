@@ -3,10 +3,10 @@ services:
   - type: web
     name: glovacrm-backend
     runtime: node
-    plan: starter
+    plan: free
     rootDir: backend
-    buildCommand: npm ci && npx prisma generate && npx tsc
-    startCommand: npx prisma db push --skip-generate && npx tsx prisma/seed.ts && node dist/index.js
+    buildCommand: npm ci && npx prisma generate && npm run build
+    startCommand: npx prisma db push --skip-generate && npx ts-node prisma/seed.ts && node dist/index.js
     envVars:
       - key: NODE_ENV
         value: production
@@ -16,44 +16,36 @@ services:
         fromDatabase:
           name: glovacrm-db
           property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: glovacrm-redis
-          property: connectionString
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
         generateValue: true
-      - key: FRONTEND_URL
-        fromService:
-          type: web
-          name: glovacrm-frontend
-          property: url
 
   # ── Frontend Web App ───────────────────────────────────────────────────────
   - type: web
     name: glovacrm-frontend
     runtime: node
-    plan: starter
+    plan: free
     rootDir: frontend
     buildCommand: npm ci && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: BACKEND_URL
+        fromService:
+          type: web
+          name: glovacrm-backend
+          envVarKey: RENDER_EXTERNAL_URL
       - key: NEXT_PUBLIC_API_URL
         fromService:
           type: web
           name: glovacrm-backend
-          property: url
+          envVarKey: RENDER_EXTERNAL_URL
 
 # ── Managed Databases ────────────────────────────────────────────────────────
 databases:
   - name: glovacrm-db
-    plan: starter
+    plan: free
     databaseName: glovacrm
     user: glovacrm_user
-
-# ── Managed Redis ────────────────────────────────────────────────────────────
-# Render Redis (Optional / can also use Upstash free Redis)

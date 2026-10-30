@@ -62,7 +62,7 @@ async function main() {
 
   // 3. Super Admin User
   await prisma.user.upsert({
-    where: { email: 'admin@glovacrm.com' },
+    where: { tenantId_email: { tenantId: tenant.id, email: 'admin@glovacrm.com' } },
     update: { passwordHash, status: 'ACTIVE' },
     create: {
       tenantId: tenant.id,
@@ -78,7 +78,7 @@ async function main() {
 
   // 4. Tenant Owner / Business Admin
   const ownerUser = await prisma.user.upsert({
-    where: { email: 'owner@glovacrm.com' },
+    where: { tenantId_email: { tenantId: tenant.id, email: 'owner@glovacrm.com' } },
     update: { passwordHash, status: 'ACTIVE' },
     create: {
       tenantId: tenant.id,
@@ -94,7 +94,7 @@ async function main() {
 
   // 5. Telecaller Agent
   const callerUser = await prisma.user.upsert({
-    where: { email: 'caller@glovacrm.com' },
+    where: { tenantId_email: { tenantId: tenant.id, email: 'caller@glovacrm.com' } },
     update: { passwordHash, status: 'ACTIVE' },
     create: {
       tenantId: tenant.id,
@@ -260,6 +260,7 @@ async function main() {
         tenantId: tenant.id,
         categoryId: cat.id,
         createdById: ownerUser.id,
+        lastUpdatedById: ownerUser.id,
         name: 'Welcome & Inquiry Confirmation',
         content: 'Hello {{customer_name}}, thank you for reaching out to {{business_name}}! Our specialist {{telecaller_name}} will connect with you shortly.',
         status: 'ACTIVE',
