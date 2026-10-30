@@ -86,6 +86,39 @@ export const fetchLeads = async (page = 1, limit = 50, search = '') => {
   return res.data;
 };
 
+export const createLead = async (data: {
+  firstName: string;
+  lastName?: string;
+  phone: string;
+  email?: string;
+  companyName?: string;
+  notes?: string;
+  priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+}) => {
+  const res = await api.post('/leads', data);
+  return res.data;
+};
+
+// ── Campaigns ────────────────────────────────────────────────────────────────
+export const fetchCampaigns = async () => {
+  try {
+    const res = await api.get('/campaigns');
+    return res.data?.data || res.data || [];
+  } catch {
+    return [];
+  }
+};
+
+// ── Team ─────────────────────────────────────────────────────────────────────
+export const fetchTeam = async () => {
+  try {
+    const res = await api.get('/users');
+    return res.data?.data || res.data || [];
+  } catch {
+    return [];
+  }
+};
+
 // ── Calls ─────────────────────────────────────────────────────────────────────
 
 /**

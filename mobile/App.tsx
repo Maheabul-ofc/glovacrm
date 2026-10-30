@@ -8,8 +8,8 @@ import { LoginScreen } from './src/screens/LoginScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { LeadsScreen } from './src/screens/LeadsScreen';
 import { CallLogScreen } from './src/screens/CallLogScreen';
-import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
-import { SettingsScreen } from './src/screens/SettingsScreen';
+import { CrmPortalScreen } from './src/screens/CrmPortalScreen';
+import { MoreMenuScreen } from './src/screens/MoreMenuScreen';
 import { getStoredUser, initApiConfig } from './src/services/api';
 
 const Tab = createBottomTabNavigator();
@@ -18,6 +18,7 @@ function MainTabs({ onLogout }: { onLogout: () => void }) {
   return (
     <NavigationContainer>
       <Tab.Navigator
+        initialRouteName="Dashboard"
         screenOptions={{
           headerStyle: {
             backgroundColor: '#1e293b',
@@ -35,7 +36,7 @@ function MainTabs({ onLogout }: { onLogout: () => void }) {
             backgroundColor: '#0f172a',
             borderTopWidth: 1,
             borderTopColor: '#1e293b',
-            height: 60,
+            height: 62,
             paddingBottom: 8,
             paddingTop: 6,
           },
@@ -52,56 +53,60 @@ function MainTabs({ onLogout }: { onLogout: () => void }) {
           component={DashboardScreen}
           options={{
             title: 'Overview',
-            headerTitle: 'GlovaCRM Overview',
+            headerTitle: 'GlovaCRM Analytics',
             tabBarIcon: ({ focused }) => (
               <Text style={{ fontSize: 20 }}>{focused ? '📊' : '📈'}</Text>
             ),
           }}
         />
+
         <Tab.Screen
           name="Leads"
           component={LeadsScreen}
           options={{
             title: 'Leads',
-            headerTitle: 'Sales Leads Pipeline',
+            headerTitle: 'Leads Pipeline & Dialer',
             tabBarIcon: ({ focused }) => (
               <Text style={{ fontSize: 20 }}>{focused ? '🎯' : '👥'}</Text>
             ),
           }}
         />
+
+        <Tab.Screen
+          name="Portal"
+          component={CrmPortalScreen}
+          options={{
+            headerShown: false,
+            title: 'Full CRM',
+            tabBarIcon: ({ focused }) => (
+              <Text style={{ fontSize: 20 }}>{focused ? '🌐' : '💻'}</Text>
+            ),
+          }}
+        />
+
         <Tab.Screen
           name="Calls"
           component={CallLogScreen}
           options={{
-            title: 'Calls',
+            title: 'Dialer',
             headerTitle: 'Call History & Duration',
             tabBarIcon: ({ focused }) => (
               <Text style={{ fontSize: 20 }}>{focused ? '📞' : '📱'}</Text>
             ),
           }}
         />
+
         <Tab.Screen
-          name="WhatsApp"
-          component={WhatsAppScreen}
+          name="More"
           options={{
-            title: 'WhatsApp',
-            headerTitle: 'WhatsApp Conversations',
+            title: 'Suite Hub',
+            headerTitle: 'GlovaCRM Enterprise Suite',
             tabBarIcon: ({ focused }) => (
-              <Text style={{ fontSize: 20 }}>{focused ? '💬' : '🗨️'}</Text>
-            ),
-          }}
-        />
-        <Tab.Screen
-          name="Settings"
-          options={{
-            title: 'Profile',
-            headerTitle: 'Agent Profile & Settings',
-            tabBarIcon: ({ focused }) => (
-              <Text style={{ fontSize: 20 }}>{focused ? '⚙️' : '👤'}</Text>
+              <Text style={{ fontSize: 20 }}>{focused ? '☰' : '⚙️'}</Text>
             ),
           }}
         >
-          {() => <SettingsScreen onLogout={onLogout} />}
+          {() => <MoreMenuScreen onLogout={onLogout} />}
         </Tab.Screen>
       </Tab.Navigator>
     </NavigationContainer>
