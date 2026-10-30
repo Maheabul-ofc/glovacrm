@@ -1,8 +1,8 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// 192.168.137.1 is Windows Mobile Hotspot default IP
-export const DEFAULT_BASE_URL = 'http://192.168.137.1:5000/api';
+// Default to the live Render backend
+export const DEFAULT_BASE_URL = 'https://glovacrm-backend.onrender.com/api';
 
 const api = axios.create({
   baseURL: DEFAULT_BASE_URL,
@@ -13,9 +13,14 @@ const api = axios.create({
 export const initApiConfig = async (): Promise<string> => {
   try {
     const savedUrl = await AsyncStorage.getItem('server_url');
-    if (savedUrl) {
+    if (savedUrl && !savedUrl.includes('192.168.') && !savedUrl.includes('localhost')) {
       api.defaults.baseURL = savedUrl;
       return savedUrl;
+    } else {
+      // Overwrite any old local IP with live Render backend
+      api.defaults.baseURL = DEFAULT_BASE_URL;
+      await AsyncStorage.setItem('server_url', DEFAULT_BASE_URL);
+      return DEFAULT_BASE_URL;
     }
   } catch (e) {
     console.warn('Failed to load server_url', e);
@@ -121,6 +126,33 @@ export const syncMobileCallResult = async (params: {
   duration: number; // duration in seconds
 }) => {
   const res = await api.post('/calls/mobile-sync', params);
+  return res.data;
+};
+
+// ── Analytics / Dashboard ───────────────────────────────────────────────────
+export const fetchAnalytics = async () => {
+  try {
+    const res = await api.get('/analytics');
+    return res.data;
+  } catch (err) {
+    // If user is super admin or tenant analytics failed, fallback
+    return null;
+  }
+};
+
+// ── WhatsApp ─────────────────────────────────────────────────────────────────
+export const fetchWhatsAppConversations = async () => {
+  const res = await api.get('/whatsapp/conversations');
+  return res.data || [];
+};
+
+export const fetchWhatsAppMessages = async (leadId: string) => {
+  const res = await api.get(`/whatsapp/messages`, { params: { leadId } });
+  return res.data || [];
+};
+
+export const sendWhatsAppMessage = async (leadId: string, message: string) => {
+  const res = await api.post('/whatsapp/send', { leadId, message });
   return res.data;
 };
 
