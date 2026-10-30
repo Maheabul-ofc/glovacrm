@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Users, PhoneCall, Megaphone, Settings, Target, BarChart3, CheckSquare, Blocks, Shield, LogOut, UserCircle, MessageSquareText } from 'lucide-react';
+import { LayoutDashboard, Users, PhoneCall, Megaphone, Settings, Target, BarChart3, CheckSquare, Blocks, Shield, LogOut, UserCircle, MessageSquareText, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 const navigation = [
@@ -10,6 +10,7 @@ const navigation = [
   { name: 'Tasks', href: '/dashboard/tasks', icon: CheckSquare },
   { name: 'Leads', href: '/dashboard/leads', icon: Target },
   { name: 'Calls', href: '/dashboard/calls', icon: PhoneCall },
+  { name: 'WhatsApp Chat', href: '/dashboard/whatsapp', icon: MessageSquare },
   { name: 'Campaigns', href: '/dashboard/campaigns', icon: Megaphone },
   { name: 'Templates', href: '/dashboard/templates', icon: MessageSquareText },
   { name: 'Integrations', href: '/dashboard/integrations', icon: Blocks },
@@ -35,7 +36,7 @@ export default function Sidebar() {
         <nav className="px-3 space-y-1">
           {navigation.filter(item => {
             if (user?.role === 'TELECALLER') {
-              return ['Overview', 'Tasks', 'Leads', 'Calls', 'Profile', 'Templates'].includes(item.name);
+              return ['Overview', 'Tasks', 'Leads', 'Calls', 'WhatsApp Chat', 'Profile', 'Templates'].includes(item.name);
             }
             if (user?.role === 'TEAM_MANAGER') {
               return !['Integrations', 'Settings'].includes(item.name);

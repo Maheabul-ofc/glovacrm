@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Filter, Download, MoreHorizontal, Search, Phone, Calendar, Trash2, Star, MessageSquare, History, Edit, PhoneCall } from 'lucide-react';
+import { Plus, Filter, Download, Upload, MoreHorizontal, Search, Phone, Calendar, Trash2, Star, MessageSquare, History, Edit, PhoneCall } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import { toast } from 'sonner';
 import CallTimerModal from '@/components/CallTimerModal';
+import ImportLeadsModal from '@/components/ImportLeadsModal';
 
 interface Lead {
   id: string;
@@ -36,6 +37,7 @@ export default function LeadsPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [priorityFilter, setPriorityFilter] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [newLead, setNewLead] = useState({
     firstName: '',
     lastName: '', // keep in state in case we need it, but we'll use firstName for Full Name
@@ -292,6 +294,13 @@ export default function LeadsPage() {
           </p>
         </div>
         <div className="mt-4 sm:mt-0 flex space-x-3">
+          <button 
+            onClick={() => setIsImportModalOpen(true)}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-colors"
+          >
+            <Upload className="-ml-1 mr-2 h-4 w-4 text-teal-600" />
+            Import CSV
+          </button>
           <button 
             onClick={exportToCSV}
             className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-colors"
@@ -743,6 +752,12 @@ export default function LeadsPage() {
         isOpen={isCallTimerOpen}
         onClose={() => setIsCallTimerOpen(false)}
         lead={callingLead}
+        onSuccess={fetchLeads}
+      />
+      {/* Bulk CSV Importer Modal */}
+      <ImportLeadsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
         onSuccess={fetchLeads}
       />
     </div>

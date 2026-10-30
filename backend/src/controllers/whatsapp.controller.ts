@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { getTenantPrisma } from '../lib/prisma';
+import { getTenantPrisma, prisma } from '../lib/prisma';
 import { getWhatsAppProvider } from '../services/whatsapp.service';
 
 export const sendMessage = async (req: Request, res: Response) => {
@@ -61,6 +61,89 @@ export const sendMessage = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * GET /api/whatsapp/messages?leadId=...
+ */
+export const getMessages = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { leadId } = req.query;
+
+    if (!leadId) {
+      return res.status(400).json({ error: 'leadId is required' });
+    }
+
+    const prisma = getTenantPrisma(tenantId);
+    const messages = await prisma.whatsAppMessage.findMany({
+      where: { leadId: leadId as string },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    res.json({ data: messages });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * GET /api/whatsapp/conversations — Lists leads with WhatsApp activity
+ */
+export const getConversations = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const prisma = getTenantPrisma(tenantId);
+
+    // Fetch leads that have at least one WhatsApp message
+    const leadsWithMessages = await prisma.lead.findMany({
+      where: {
+        whatsappMessages: {
+          some: {},
+        },
+      },
+      include: {
+        whatsappMessages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+    });
+
+    // If no leads have WhatsApp messages yet, return recent leads for quick chat initiation
+    if (leadsWithMessages.length === 0) {
+      const recentLeads = await prisma.lead.findMany({
+        take: 20,
+        orderBy: { createdAt: 'desc' },
+      });
+      return res.json({
+        data: recentLeads.map((l) => ({
+          lead: l,
+          lastMessage: null,
+        })),
+      });
+    }
+
+    const data = leadsWithMessages.map((lead) => ({
+      lead: {
+        id: lead.id,
+        firstName: lead.firstName,
+        lastName: lead.lastName,
+        phone: lead.phone,
+        status: lead.status,
+        companyName: lead.companyName,
+      },
+      lastMessage: lead.whatsappMessages[0] || null,
+    }));
+
+    res.json({ data });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   try {
     if (req.method === 'GET') {
@@ -86,9 +169,32 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
               const text = msg.text?.body;
               
               if (text) {
-                // In production, resolve tenant by matching the receiving phone number against IntegrationConfig
-                // For MVP, just log the incoming message
                 console.log(`[WhatsApp Incoming] From: ${from}, Message: ${text}`);
+                const cleanPhone = from.replace(/\D/g, '').slice(-10);
+                const lead = await prisma.lead.findFirst({
+                  where: { phone: { contains: cleanPhone } },
+                });
+                if (lead) {
+                  await prisma.whatsAppMessage.create({
+                    data: {
+                      tenantId: lead.tenantId,
+                      leadId: lead.id,
+                      direction: 'INBOUND',
+                      status: 'DELIVERED',
+                      messageType: 'TEXT',
+                      content: text,
+                      providerMessageId: msg.id,
+                    },
+                  });
+                  await prisma.leadActivity.create({
+                    data: {
+                      tenantId: lead.tenantId,
+                      leadId: lead.id,
+                      type: 'WHATSAPP',
+                      description: `Incoming WhatsApp: "${text.substring(0, 60)}${text.length > 60 ? '...' : ''}"`,
+                    },
+                  });
+                }
               }
             }
           }

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Settings, Link as LinkIcon, Webhook, Phone, MessageSquare, Briefcase, RefreshCw, Copy, CheckCircle2 } from 'lucide-react';
+import { Settings, Link as LinkIcon, Webhook, Phone, MessageSquare, Briefcase, RefreshCw, Copy, CheckCircle2, CreditCard } from 'lucide-react';
 import api from '@/lib/api';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -16,6 +16,8 @@ const AVAILABLE_INTEGRATIONS = [
   { id: 'TELEGRAM', name: 'Telegram Bot', description: 'Receive notifications and leads via Telegram.', icon: MessageSquare, color: 'text-sky-500', type: 'API' },
   { id: 'EXOTEL', name: 'Exotel Telephony', description: 'Cloud telephony for click-to-call & call recording.', icon: Phone, color: 'text-teal-500', type: 'API' },
   { id: 'TWILIO', name: 'Twilio Telephony', description: 'Global voice API for outbound calling.', icon: Phone, color: 'text-red-600', type: 'API' },
+  { id: 'INSTAMOJO', name: 'Instamojo Payments', description: 'Indian payment gateway for subscriptions & plans.', icon: CreditCard, color: 'text-indigo-600', type: 'API' },
+  { id: 'RAZORPAY', name: 'Razorpay Payments', description: 'Accept UPI, Cards, and NetBanking online.', icon: CreditCard, color: 'text-blue-600', type: 'API' },
 ];
 
 export default function IntegrationsPage() {
@@ -199,11 +201,15 @@ export default function IntegrationsPage() {
                     <>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number ID</label>
-                        <input required value={configForm.phoneNumberId || ''} onChange={e => setConfigForm({...configForm, phoneNumberId: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input required value={configForm.phoneNumberId || ''} onChange={e => setConfigForm({...configForm, phoneNumberId: e.target.value})} placeholder="e.g. 104598239023..." className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">WhatsApp Business Account ID (WABA)</label>
+                        <input value={configForm.wabaId || ''} onChange={e => setConfigForm({...configForm, wabaId: e.target.value})} placeholder="e.g. 10928374920..." className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Permanent Access Token</label>
-                        <input required type="password" value={configForm.accessToken || ''} onChange={e => setConfigForm({...configForm, accessToken: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input required type="password" value={configForm.accessToken || ''} onChange={e => setConfigForm({...configForm, accessToken: e.target.value})} placeholder="EAAG..." className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                       </div>
                     </>
                   )}
@@ -243,6 +249,36 @@ export default function IntegrationsPage() {
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Chat ID (Optional)</label>
                         <input value={configForm.chatId || ''} onChange={e => setConfigForm({...configForm, chatId: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedProvider.id === 'INSTAMOJO' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Private API Key</label>
+                        <input required value={configForm.apiKey || ''} onChange={e => setConfigForm({...configForm, apiKey: e.target.value})} placeholder="test_... or live_..." className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Private Auth Token</label>
+                        <input required type="password" value={configForm.authToken || ''} onChange={e => setConfigForm({...configForm, authToken: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Private Salt (Optional for Webhooks)</label>
+                        <input type="password" value={configForm.salt || ''} onChange={e => setConfigForm({...configForm, salt: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedProvider.id === 'RAZORPAY' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Key ID</label>
+                        <input required value={configForm.keyId || ''} onChange={e => setConfigForm({...configForm, keyId: e.target.value})} placeholder="rzp_test_... or rzp_live_..." className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Key Secret</label>
+                        <input required type="password" value={configForm.keySecret || ''} onChange={e => setConfigForm({...configForm, keySecret: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                       </div>
                     </>
                   )}

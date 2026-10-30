@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt';
 import { provisionTenant } from '../services/provisioning.service';
+import { sendPasswordResetEmail } from '../services/email.service';
 
 /**
  * POST /api/auth/register — Self-service company registration (free trial)
@@ -232,6 +234,98 @@ export const changePassword = async (req: Request, res: Response) => {
     res.json({ message: 'Password updated successfully' });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * POST /api/auth/forgot-password
+ */
+export const forgotPassword = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+    });
+
+    // Always respond with success to prevent account enumeration
+    if (!user) {
+      return res.json({
+        message: 'If an account exists with that email, a password reset link has been dispatched.',
+      });
+    }
+
+    const secret = process.env.JWT_SECRET || 'glovacrm_secret_fallback';
+    const resetToken = jwt.sign(
+      { userId: user.id, email: user.email, purpose: 'RESET_PASSWORD' },
+      secret,
+      { expiresIn: '1h' }
+    );
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const resetLink = `${frontendUrl.replace(/\/+$/, '')}/reset-password?token=${resetToken}`;
+
+    await sendPasswordResetEmail(user.email, user.firstName, resetLink);
+
+    res.json({
+      message: 'If an account exists with that email, a password reset link has been dispatched.',
+      // In dev mode without SMTP, also return the resetLink for testing convenience
+      resetLink: process.env.NODE_ENV !== 'production' ? resetLink : undefined,
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * POST /api/auth/reset-password
+ */
+export const resetPassword = async (req: Request, res: Response) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+    }
+
+    const secret = process.env.JWT_SECRET || 'glovacrm_secret_fallback';
+    let decoded: any;
+    try {
+      decoded = jwt.verify(token, secret);
+    } catch {
+      return res.status(400).json({ error: 'Invalid or expired password reset link. Please request a new one.' });
+    }
+
+    if (decoded.purpose !== 'RESET_PASSWORD') {
+      return res.status(400).json({ error: 'Invalid token purpose' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    await prisma.user.update({
+      where: { id: decoded.userId },
+      data: { passwordHash },
+    });
+
+    // Invalidate existing sessions
+    await prisma.session.deleteMany({
+      where: { userId: decoded.userId },
+    });
+
+    res.json({ message: 'Password has been reset successfully. You can now log in.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };

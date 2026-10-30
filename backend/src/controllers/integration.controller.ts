@@ -3,7 +3,19 @@ import { getTenantPrisma } from '../lib/prisma';
 import { z } from 'zod';
 
 const integrationSchema = z.object({
-  provider: z.enum(['META_LEAD_ADS', 'GOOGLE_ADS', 'INDIAMART', 'JUSTDIAL']),
+  provider: z.enum([
+    'META_LEAD_ADS',
+    'INSTAGRAM',
+    'GOOGLE_ADS',
+    'INDIAMART',
+    'JUSTDIAL',
+    'WHATSAPP',
+    'TELEGRAM',
+    'EXOTEL',
+    'TWILIO',
+    'INSTAMOJO',
+    'RAZORPAY'
+  ]),
   config: z.any(),
   isActive: z.boolean().default(true)
 });
