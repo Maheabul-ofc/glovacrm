@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 
 export default function LoginPage() {
@@ -8,14 +8,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<string | null>(null);
-
-  // Catch any client-side JavaScript error on mobile and show it
-  useEffect(() => {
-    window.onerror = (msg, url, line) => {
-      window.alert(`Script Error on phone: ${msg} at line ${line}`);
-    };
-  }, []);
 
   const handleTestConnection = async () => {
     setTestStatus('Checking /api/health...');
@@ -24,11 +18,9 @@ export default function LoginPage() {
       const text = await res.text();
       const statusMsg = `Backend status (${res.status}): ${text}`;
       setTestStatus(statusMsg);
-      window.alert(`Connection Result: ${statusMsg}`);
     } catch (e: any) {
       const errText = `Failed: ${e.message}`;
       setTestStatus(errText);
-      window.alert(`Connection Error: ${errText}`);
     }
   };
 
@@ -36,6 +28,7 @@ export default function LoginPage() {
     e.preventDefault();
     setIsLoading(true);
     setErrorMsg(null);
+    setSuccessMsg(null);
 
     try {
       const response = await fetch('/api/auth/login', {
@@ -59,20 +52,17 @@ export default function LoginPage() {
 
       // Save token
       localStorage.setItem('accessToken', data.accessToken);
-      window.alert('Login Successful! Redirecting...');
+      setSuccessMsg('Login successful! Redirecting to workspace...');
 
-      // Redirect cleanly
-      if (data.user?.role === 'SUPER_ADMIN') {
-        window.location.href = '/admin';
-      } else {
-        window.location.href = '/dashboard';
-      }
+      // Redirect cleanly without popup
+      const destination = data.user?.role === 'SUPER_ADMIN' ? '/admin' : '/dashboard';
+      setTimeout(() => {
+        window.location.href = destination;
+      }, 300);
     } catch (err: any) {
       console.error('Login error:', err);
       const msg = err.message || 'Login failed. Please check credentials or backend.';
       setErrorMsg(msg);
-      window.alert(`Sign-in Error:\n${msg}`);
-    } finally {
       setIsLoading(false);
     }
   };
@@ -92,8 +82,16 @@ export default function LoginPage() {
         </div>
 
         {errorMsg && (
-          <div className="p-3 bg-red-50 border border-red-300 text-red-800 rounded-lg text-sm font-semibold">
-            ⚠️ {errorMsg}
+          <div className="p-3 bg-red-50 border border-red-300 text-red-800 rounded-lg text-sm font-semibold flex items-center gap-2">
+            <span>⚠️</span>
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
+        {successMsg && (
+          <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-lg text-sm font-semibold flex items-center gap-2">
+            <span>✅</span>
+            <span>{successMsg}</span>
           </div>
         )}
 
@@ -103,7 +101,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form className="space-y-4" action="/api/auth/login-form" method="POST" onSubmit={handleSubmit}>
+        <form className="space-y-4" onSubmit={handleSubmit}>
           <div>
             <label htmlFor="email-address" className="block text-sm font-medium text-gray-700">
               Email address

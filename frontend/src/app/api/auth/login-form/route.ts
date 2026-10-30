@@ -8,7 +8,10 @@ export async function POST(req: NextRequest) {
 
     if (!email || !password) {
       return new NextResponse(
-        `<html><body><script>alert("Please enter both email and password."); window.history.back();</script></body></html>`,
+        `<html><body style="font-family:sans-serif;padding:30px;text-align:center;">
+          <h3 style="color:#b91c1c;">Please enter both email and password</h3>
+          <button onclick="window.history.back()" style="padding:8px 16px;background:#0d9488;color:#fff;border:none;border-radius:6px;cursor:pointer;">Go Back</button>
+        </body></html>`,
         { headers: { 'Content-Type': 'text/html' } }
       );
     }
