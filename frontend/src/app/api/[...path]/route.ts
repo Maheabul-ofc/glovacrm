@@ -1,5 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Max time to wait for backend (Render free tier cold starts take ~25-30s)
+const BACKEND_TIMEOUT_MS = 60000;
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function handler(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -20,16 +34,28 @@ async function handler(
       ? undefined
       : await req.arrayBuffer();
 
-    const response = await fetch(targetUrl, {
-      method: req.method,
-      headers,
-      body,
-      // @ts-ignore
-      duplex: 'half',
-    });
+    const response = await fetchWithTimeout(
+      targetUrl,
+      {
+        method: req.method,
+        headers,
+        body,
+        // @ts-ignore
+        duplex: 'half',
+      },
+      BACKEND_TIMEOUT_MS
+    );
 
     const responseText = await response.text();
     const contentType = response.headers.get('content-type') || 'application/json';
+
+    // If backend returned 429, pass it through with a friendly message
+    if (response.status === 429) {
+      return NextResponse.json(
+        { error: 'Server is busy — please wait 30 seconds and try again.' },
+        { status: 429 }
+      );
+    }
 
     return new NextResponse(responseText, {
       status: response.status,
@@ -40,10 +66,17 @@ async function handler(
     });
   } catch (err: any) {
     console.error(`[API Proxy Error] ${req.method} ${targetUrl} failed:`, err.message);
+
+    // Timeout / abort
+    if (err.name === 'AbortError' || err.message?.includes('abort')) {
+      return NextResponse.json(
+        { error: 'Backend is waking up — please wait 30 seconds and try again.' },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
-      {
-        error: `Cannot connect to Backend API (127.0.0.1:5000): ${err.message}. Please check if backend is running.`,
-      },
+      { error: 'Cannot reach backend server. Please try again in a moment.' },
       { status: 502 }
     );
   }
