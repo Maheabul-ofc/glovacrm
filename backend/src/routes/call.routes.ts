@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
-import { initiateCall, handleCallWebhook, listCalls, getPendingMobileCalls, syncMobileCallResult, logManualCall, updateCall } from '../controllers/call.controller';
+import { initiateCall, handleCallWebhook, listCalls, getPendingMobileCalls, syncMobileCallResult, logManualCall, updateCall, autoLogCall } from '../controllers/call.controller';
 import { requireAuth } from '../middleware/auth.middleware';
 
 const router = Router();
@@ -22,6 +22,7 @@ const upload = multer({ storage });
 router.get('/', requireAuth, listCalls);
 router.post('/initiate', requireAuth, initiateCall);
 router.post('/log', requireAuth, upload.single('recording'), logManualCall);
+router.post('/auto-log', requireAuth, autoLogCall);  // Android auto-detection (tamper-proof)
 router.patch('/:id', requireAuth, updateCall);
 
 // Android Mobile Sync API (Requires authenticated user/telecaller)

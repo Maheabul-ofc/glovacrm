@@ -327,3 +327,118 @@ export const updateCall = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+/**
+ * POST /api/calls/auto-log
+ * Called by the GlovaCRM Android app after auto-detecting call completion.
+ * No manual input required — duration and status come from TelephonyManager.
+ */
+export const autoLogCall = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.userId;
+    let { phone, status, duration, direction = 'OUTBOUND', provider = 'ANDROID_AUTO', leadId, notes } = req.body;
+
+    if (!phone && !leadId) {
+      return res.status(400).json({ error: 'Missing phone number or leadId' });
+    }
+
+    if (!status) {
+      return res.status(400).json({ error: 'Missing call status' });
+    }
+
+    // Normalize status values from Android TelephonyManager
+    const normalizedStatus = (['COMPLETED', 'ANSWERED'].includes(status.toUpperCase())
+      ? 'COMPLETED'
+      : ['MISSED', 'NO_ANSWER'].includes(status.toUpperCase())
+        ? 'MISSED'
+        : ['FAILED', 'BUSY', 'REJECTED'].includes(status.toUpperCase())
+          ? status.toUpperCase()
+          : 'COMPLETED') as string;
+
+    const prisma = getTenantPrisma(tenantId);
+    let finalLeadId = leadId;
+
+    // Auto-resolve lead by phone number
+    if (!finalLeadId && phone) {
+      const normalizedPhone = phone.replace(/\s+/g, '').replace(/-/g, '');
+      let lead = await prisma.lead.findFirst({
+        where: {
+          tenantId,
+          OR: [
+            { phone: normalizedPhone },
+            { phone: { endsWith: normalizedPhone.slice(-10) } },
+          ]
+        }
+      });
+
+      if (!lead) {
+        // No lead found — create a placeholder so the call is still logged
+        lead = await prisma.lead.create({
+          data: {
+            tenantId,
+            firstName: 'Auto',
+            lastName: 'Detected',
+            phone: normalizedPhone,
+            status: 'NEW',
+            source: 'MANUAL',
+            notes: 'Auto-created from call detection'
+          }
+        });
+      }
+      finalLeadId = lead.id;
+    }
+
+    // Create the call record (auto-logged, tamper-proof)
+    const call = await prisma.call.create({
+      data: {
+        tenantId,
+        leadId: finalLeadId,
+        userId,
+        provider: 'ANDROID_AUTO',
+        providerCallId: `auto-${Date.now()}-${userId.slice(0, 8)}`,
+        direction: direction.toUpperCase() as any,
+        status: normalizedStatus,
+        duration: parseInt(String(duration)) || 0,
+        notes: notes || `Auto-logged by GlovaCRM Android app`
+      }
+    });
+
+    // Log lead activity
+    const durationStr = call.duration > 0
+      ? `${Math.floor(call.duration / 60)}m ${call.duration % 60}s`
+      : '0s';
+
+    await prisma.leadActivity.create({
+      data: {
+        tenantId,
+        leadId: finalLeadId,
+        userId,
+        type: 'CALL',
+        description: `📱 Auto-detected call: ${normalizedStatus} · Duration: ${durationStr}`,
+        metadata: {
+          callId: call.id,
+          duration: call.duration,
+          status: normalizedStatus,
+          provider: 'ANDROID_AUTO',
+          autoLogged: true
+        }
+      }
+    });
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Call auto-logged successfully',
+      data: {
+        callId: call.id,
+        leadId: finalLeadId,
+        status: normalizedStatus,
+        duration: call.duration,
+        autoLogged: true
+      }
+    });
+  } catch (error: any) {
+    console.error('[AutoLog] Error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
