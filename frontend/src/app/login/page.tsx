@@ -10,6 +10,7 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<string | null>(null);
+  const [waitingMsg, setWaitingMsg] = useState<string | null>(null);
 
   const handleTestConnection = async () => {
     setTestStatus('Checking /api/health...');
@@ -26,9 +27,16 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return; // prevent double submit
     setIsLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
+    setWaitingMsg(null);
+
+    // Show "waking up" message after 5 seconds if still loading
+    const waitTimer = setTimeout(() => {
+      setWaitingMsg('⏳ Server is waking up — this can take 20–30 seconds on first load. Please wait...');
+    }, 5000);
 
     try {
       const response = await fetch('/api/auth/login', {
@@ -37,7 +45,11 @@ export default function LoginPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ email: email.trim(), password }),
+        signal: AbortSignal.timeout(65000), // 65s client timeout
       });
+
+      clearTimeout(waitTimer);
+      setWaitingMsg(null);
 
       const data = await response.json().catch(() => null);
 
@@ -60,8 +72,15 @@ export default function LoginPage() {
         window.location.href = destination;
       }, 300);
     } catch (err: any) {
+      clearTimeout(waitTimer);
+      setWaitingMsg(null);
       console.error('Login error:', err);
-      const msg = err.message || 'Login failed. Please check credentials or backend.';
+      let msg = err.message || 'Login failed. Please check credentials or backend.';
+      if (msg.includes('429')) {
+        msg = 'Too many requests — server is busy. Please wait 30 seconds and try again.';
+      } else if (err.name === 'TimeoutError' || msg.includes('timeout') || msg.includes('abort')) {
+        msg = 'Server is taking too long to respond. Please wait a moment and try again.';
+      }
       setErrorMsg(msg);
       setIsLoading(false);
     }
@@ -92,6 +111,12 @@ export default function LoginPage() {
           <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-lg text-sm font-semibold flex items-center gap-2">
             <span>✅</span>
             <span>{successMsg}</span>
+          </div>
+        )}
+
+        {waitingMsg && (
+          <div className="p-3 bg-amber-50 border border-amber-300 text-amber-800 rounded-lg text-sm font-medium">
+            {waitingMsg}
           </div>
         )}
 
@@ -146,7 +171,7 @@ export default function LoginPage() {
             disabled={isLoading}
             className="w-full py-3 px-4 bg-teal-600 hover:bg-teal-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-60 text-sm shadow-md cursor-pointer mt-2"
           >
-            {isLoading ? 'Signing in...' : 'Sign in'}
+            {isLoading ? 'Signing in... (please wait)' : 'Sign in'}
           </button>
 
           <div className="flex justify-between items-center text-xs text-gray-500 pt-3 border-t border-gray-100 mt-4">

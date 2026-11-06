@@ -3,7 +3,7 @@ import axios from 'axios';
 // Routes through Next.js catch-all route handler /api/[...path]
 const api = axios.create({
   baseURL: '/api',
-  timeout: 10000, // 10s timeout prevents requests from hanging forever
+  timeout: 60000, // 60s timeout — Render free tier can take 25-30s to wake up
   withCredentials: true,
 });
 
