@@ -25,6 +25,7 @@ export default function CallTimerModal({ isOpen, onClose, lead, onSuccess }: Cal
   const [manualDuration, setManualDuration] = useState({ mins: '', secs: '' });
   const [saving, setSaving] = useState(false);
   const [callId, setCallId] = useState<string | null>(null);
+  const [autoDetected, setAutoDetected] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Reset state every time modal opens
@@ -36,6 +37,7 @@ export default function CallTimerModal({ isOpen, onClose, lead, onSuccess }: Cal
       setNotes('');
       setManualDuration({ mins: '', secs: '' });
       setCallId(null);
+      setAutoDetected(false);
 
       // Trigger tel: deep-link or React Native WebView bridge
       if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
@@ -220,14 +222,21 @@ export default function CallTimerModal({ isOpen, onClose, lead, onSuccess }: Cal
           {phase === 'outcome' && (
             <div className="space-y-4">
               <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                {autoDetected && (
+                  <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-teal-50 border border-teal-200 rounded-lg">
+                    <span className="text-teal-600 text-sm">🔒</span>
+                    <span className="text-teal-700 text-xs font-semibold">Auto-detected by Android — cannot be edited</span>
+                  </div>
+                )}
                 <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-2">Call Duration</p>
                 <div className="flex items-center gap-2">
                   <div className="flex-1">
                     <input
                       type="number" min="0" max="999"
                       value={manualDuration.mins}
-                      onChange={e => setManualDuration(p => ({ ...p, mins: e.target.value }))}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-center font-mono text-lg font-bold text-gray-800 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
+                      onChange={e => !autoDetected && setManualDuration(p => ({ ...p, mins: e.target.value }))}
+                      readOnly={autoDetected}
+                      className={`w-full border rounded-lg px-3 py-2 text-center font-mono text-lg font-bold outline-none ${autoDetected ? "border-teal-300 bg-teal-50 text-teal-800 cursor-not-allowed" : "border-gray-200 text-gray-800 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"}`}
                     />
                     <p className="text-[10px] text-gray-400 text-center mt-0.5">minutes</p>
                   </div>
@@ -236,8 +245,9 @@ export default function CallTimerModal({ isOpen, onClose, lead, onSuccess }: Cal
                     <input
                       type="number" min="0" max="59"
                       value={manualDuration.secs}
-                      onChange={e => setManualDuration(p => ({ ...p, secs: e.target.value }))}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-center font-mono text-lg font-bold text-gray-800 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
+                      onChange={e => !autoDetected && setManualDuration(p => ({ ...p, secs: e.target.value }))}
+                      readOnly={autoDetected}
+                      className={`w-full border rounded-lg px-3 py-2 text-center font-mono text-lg font-bold outline-none ${autoDetected ? "border-teal-300 bg-teal-50 text-teal-800 cursor-not-allowed" : "border-gray-200 text-gray-800 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"}`}
                     />
                     <p className="text-[10px] text-gray-400 text-center mt-0.5">seconds</p>
                   </div>
