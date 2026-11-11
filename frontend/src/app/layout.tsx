@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "sonner";
 import { Providers } from "./Providers";
+import KeepAlive from "@/components/KeepAlive";
 
 export const viewport: Viewport = {
   themeColor: "#0d9488",
@@ -31,6 +32,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased font-sans">
         <Providers>
+          <KeepAlive />
           {children}
           <Toaster position="top-right" richColors closeButton />
         </Providers>
