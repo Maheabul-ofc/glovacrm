@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { getTenantPrisma } from '../lib/prisma';
 import { getTelephonyProvider } from '../services/telephony.service';
-import { z } from 'zod';
 
 export const initiateCall = async (req: Request, res: Response) => {
   try {
@@ -98,7 +97,7 @@ export const listCalls = async (req: Request, res: Response) => {
     const search = req.query.search as string;
     const leadId = req.query.leadId as string;
 
-    let whereClause: any = {};
+    const whereClause: any = {};
     // Support filtering by leadId (for Lead detail Calls Tab)
     if (leadId) whereClause.leadId = leadId;
     if (search) {
@@ -139,11 +138,11 @@ export const handleCallWebhook = async (req: Request, res: Response) => {
     // Public Webhook for Exotel/Twilio to post status updates
     const tenantId = req.query.tenantId as string;
     const { CallSid, CallStatus, Duration, RecordingUrl } = req.body;
-    
+
     if (!tenantId || !CallSid) return res.status(400).send('Bad Request');
 
     const prisma = getTenantPrisma(tenantId);
-    
+
     await prisma.call.update({
       where: { providerCallId: CallSid },
       data: {
@@ -226,100 +225,80 @@ export const syncMobileCallResult = async (req: Request, res: Response) => {
   }
 };
 
-
-
 /**
- * Deep-Link Manual Call Logger
+ * Deep-Link Manual Call Logger (DISABLED for anti-scam protection)
  */
-export const logManualCall = async (req: Request, res: Response) => {
-  try {
-    const tenantId = req.user!.tenantId;
-    const userId = req.user!.userId;
-    let { toPhone, status, duration, leadId } = req.body;
-
-    if ((!toPhone && !leadId) || !status) {
-      return res.status(400).json({ error: 'Missing lead, phone number, or status' });
-    }
-
-    const prisma = getTenantPrisma(tenantId);
-    let finalLeadId = leadId;
-
-    if (!finalLeadId) {
-      // Auto-resolve Lead by phone
-      let lead = await prisma.lead.findFirst({
-        where: { tenantId, phone: toPhone }
-      });
-      
-      if (!lead) {
-        // Create an Unknown Lead
-        lead = await prisma.lead.create({
-          data: {
-            tenantId,
-            firstName: 'Unknown',
-            lastName: 'Lead',
-            phone: toPhone,
-            status: 'NEW',
-            source: 'MANUAL',
-          }
-        });
-      }
-      finalLeadId = lead.id;
-    }
-
-    const recordingUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
-
-    // Save Call Record
-    const call = await prisma.call.create({
-      data: {
-        tenantId,
-        leadId: finalLeadId,
-        userId,
-        provider: 'MANUAL',
-        providerCallId: 'manual-' + Date.now(),
-        direction: 'OUTBOUND',
-        status: status,
-        duration: parseInt(duration) || 0,
-        recordingUrl: recordingUrl
-      }
-    });
-
-    // Log Activity
-    await prisma.leadActivity.create({
-      data: {
-        tenantId,
-        leadId: finalLeadId,
-        userId,
-        type: 'CALL',
-        description: 'Manual call logged as ' + status,
-        metadata: { callId: call.id, duration }
-      }
-    });
-
-    res.status(200).json({ status: 'success', data: call });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+export const logManualCall = async (_req: Request, res: Response) => {
+  return res.status(403).json({
+    error: 'Manual call logging is disabled to prevent call tampering. Please make calls through the GlovaCRM Android app for automatic OS-verified call tracking.',
+  });
 };
 
 /**
- * Update a call record — used by frontend timer to save duration after call ends
+ * Update a call record — locked against duration or completion tampering.
+ * Only allows adding post-call notes and refining unanswered reasons (for 0s calls).
  */
 export const updateCall = async (req: Request, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
+    const userId = req.user!.userId;
     const prisma = getTenantPrisma(tenantId);
     const id = req.params.id as string;
     const { status, duration, notes } = req.body;
 
+    const existing = await prisma.call.findFirst({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Call record not found' });
+    }
+
+    // Never allow modifying duration
+    if (duration !== undefined && parseInt(String(duration), 10) !== existing.duration) {
+      return res.status(403).json({
+        error: 'Call duration is locked and cannot be edited.',
+      });
+    }
+
+    const updateData: { status?: string; notes?: string } = {};
+
+    if (status && status !== existing.status) {
+      const requested = String(status).toUpperCase();
+      // Completed calls with talk time cannot be changed; 0s calls can NEVER be marked COMPLETED
+      if (existing.duration > 0 || existing.status === 'COMPLETED') {
+        return res.status(403).json({
+          error: 'Completed call status is locked by OS Call Log verification.',
+        });
+      }
+      if (requested === 'COMPLETED') {
+        return res.status(403).json({
+          error: 'Cannot mark a 0-second unanswered call as COMPLETED.',
+        });
+      }
+      if (['MISSED', 'NO_ANSWER', 'BUSY', 'FAILED'].includes(requested)) {
+        updateData.status = requested;
+      }
+    }
+
+    if (notes !== undefined) {
+      updateData.notes = String(notes);
+    }
+
     const call = await prisma.call.update({
       where: { id },
-      data: {
-        ...(status && { status }),
-        ...(duration !== undefined && { duration: parseInt(String(duration)) }),
-        ...(notes !== undefined && { notes }),
-      },
+      data: updateData,
     });
+
+    if (notes && String(notes).trim()) {
+      await prisma.leadActivity.create({
+        data: {
+          tenantId,
+          leadId: existing.leadId,
+          userId,
+          type: 'NOTE',
+          description: `Call note: ${String(notes).trim()}`,
+          metadata: { callId: existing.id, fromPostCall: true },
+        },
+      });
+    }
 
     res.json({ data: call });
   } catch (error) {
@@ -330,14 +309,25 @@ export const updateCall = async (req: Request, res: Response) => {
 
 /**
  * POST /api/calls/auto-log
- * Called by the GlovaCRM Android app after auto-detecting call completion.
- * No manual input required — duration and status come from TelephonyManager.
+ * Called by the GlovaCRM Android app after auto-detecting call completion from Android Call Log.
+ * Tamper-proof & idempotent via callKey / providerCallId.
  */
 export const autoLogCall = async (req: Request, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.userId;
-    let { phone, status, duration, direction = 'OUTBOUND', provider = 'ANDROID_AUTO', leadId, notes } = req.body;
+    const {
+      phone,
+      status,
+      duration,
+      direction = 'OUTBOUND',
+      leadId,
+      notes,
+      callKey,
+      providerCallId,
+      callLogType,
+      detectedFrom = 'ANDROID_CALL_LOG',
+    } = req.body;
 
     if (!phone && !leadId) {
       return res.status(400).json({ error: 'Missing phone number or leadId' });
@@ -347,67 +337,129 @@ export const autoLogCall = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Missing call status' });
     }
 
-    // Normalize status values from Android TelephonyManager
-    const normalizedStatus = (['COMPLETED', 'ANSWERED'].includes(status.toUpperCase())
-      ? 'COMPLETED'
-      : ['MISSED', 'NO_ANSWER'].includes(status.toUpperCase())
-        ? 'MISSED'
-        : ['FAILED', 'BUSY', 'REJECTED'].includes(status.toUpperCase())
-          ? status.toUpperCase()
-          : 'COMPLETED') as string;
+    const parsedDuration = Math.max(0, parseInt(String(duration ?? 0), 10) || 0);
+    const rawStatus = String(status).toUpperCase();
+
+    // Enforce anti-scam invariant: 0s can NEVER be COMPLETED; >0s is COMPLETED
+    let normalizedStatus: string;
+    if (parsedDuration > 0) {
+      normalizedStatus = 'COMPLETED';
+    } else if (['BUSY', 'REJECTED'].includes(rawStatus)) {
+      normalizedStatus = 'BUSY';
+    } else if (['FAILED', 'BLOCKED'].includes(rawStatus)) {
+      normalizedStatus = 'FAILED';
+    } else if (rawStatus === 'NO_ANSWER') {
+      normalizedStatus = 'NO_ANSWER';
+    } else {
+      normalizedStatus = 'MISSED';
+    }
 
     const prisma = getTenantPrisma(tenantId);
-    let finalLeadId = leadId;
+    const effectiveCallKey =
+      (typeof callKey === 'string' && callKey.trim()) ||
+      (typeof providerCallId === 'string' && providerCallId.trim()) ||
+      `auto-${Date.now()}-${userId.slice(0, 8)}`;
 
-    // Auto-resolve lead by phone number
+    // Idempotency check so mobile + web retries never duplicate a call
+    const existingCall = await prisma.call.findFirst({
+      where: { providerCallId: effectiveCallKey },
+    });
+    if (existingCall) {
+      return res.status(200).json({
+        status: 'success',
+        message: 'Call already auto-logged',
+        data: {
+          id: existingCall.id,
+          callId: existingCall.id,
+          leadId: existingCall.leadId,
+          status: existingCall.status,
+          duration: existingCall.duration,
+          provider: existingCall.provider,
+          autoLogged: true,
+          deduplicated: true,
+        },
+      });
+    }
+
+    let finalLeadId = leadId as string | undefined;
+    if (finalLeadId) {
+      const leadExists = await prisma.lead.findFirst({ where: { id: finalLeadId } });
+      if (!leadExists) finalLeadId = undefined;
+    }
+
+    // Auto-resolve lead by normalized phone number if leadId wasn't supplied
     if (!finalLeadId && phone) {
-      const normalizedPhone = phone.replace(/\s+/g, '').replace(/-/g, '');
+      const digitsOnly = String(phone).replace(/\D/g, '');
+      const last10 = digitsOnly.length >= 10 ? digitsOnly.slice(-10) : digitsOnly;
+      const last4 = digitsOnly.slice(-4);
+
       let lead = await prisma.lead.findFirst({
         where: {
-          tenantId,
           OR: [
-            { phone: normalizedPhone },
-            { phone: { endsWith: normalizedPhone.slice(-10) } },
-          ]
-        }
+            { phone: String(phone).trim() },
+            ...(last10.length >= 7 ? [{ phone: { endsWith: last10 } }] : []),
+          ],
+        },
       });
 
+      // Fallback digit-normalized match for formatted DB numbers like "+91 98765-43210"
+      if (!lead && last4.length === 4) {
+        const candidates = await prisma.lead.findMany({
+          where: { phone: { contains: last4 } },
+          take: 25,
+        });
+        lead =
+          candidates.find((c) => {
+            const cDigits = (c.phone || '').replace(/\D/g, '');
+            const cLast10 = cDigits.length >= 10 ? cDigits.slice(-10) : cDigits;
+            return cLast10 === last10 || cDigits.endsWith(last10);
+          }) || null;
+      }
+
       if (!lead) {
-        // No lead found — create a placeholder so the call is still logged
         lead = await prisma.lead.create({
           data: {
             tenantId,
             firstName: 'Auto',
             lastName: 'Detected',
-            phone: normalizedPhone,
+            phone: String(phone).trim(),
             status: 'NEW',
             source: 'MANUAL',
-            notes: 'Auto-created from call detection'
-          }
+            notes: 'Auto-created from Android call detection',
+          },
         });
       }
       finalLeadId = lead.id;
     }
 
-    // Create the call record (auto-logged, tamper-proof)
+    if (!finalLeadId) {
+      return res.status(400).json({ error: 'Could not resolve lead for call' });
+    }
+
     const call = await prisma.call.create({
       data: {
         tenantId,
         leadId: finalLeadId,
         userId,
         provider: 'ANDROID_AUTO',
-        providerCallId: `auto-${Date.now()}-${userId.slice(0, 8)}`,
-        direction: direction.toUpperCase() as any,
+        providerCallId: effectiveCallKey,
+        direction: String(direction).toUpperCase(),
         status: normalizedStatus,
-        duration: parseInt(String(duration)) || 0,
-        notes: notes || `Auto-logged by GlovaCRM Android app`
-      }
+        duration: parsedDuration,
+        notes: notes || null,
+      },
     });
 
-    // Log lead activity
-    const durationStr = call.duration > 0
-      ? `${Math.floor(call.duration / 60)}m ${call.duration % 60}s`
-      : '0s';
+    // Update lead lastContactedAt
+    await prisma.lead.update({
+      where: { id: finalLeadId },
+      data: { lastContactedAt: new Date() },
+    }).catch(() => {});
+
+    const durationStr =
+      call.duration > 0
+        ? `${Math.floor(call.duration / 60)}m ${call.duration % 60}s`
+        : '0s';
 
     await prisma.leadActivity.create({
       data: {
@@ -415,27 +467,31 @@ export const autoLogCall = async (req: Request, res: Response) => {
         leadId: finalLeadId,
         userId,
         type: 'CALL',
-        description: `📱 Auto-detected call: ${normalizedStatus} · Duration: ${durationStr}`,
+        description: `Auto-detected call (${normalizedStatus}) · Verified Duration: ${durationStr}`,
         metadata: {
           callId: call.id,
           duration: call.duration,
           status: normalizedStatus,
           provider: 'ANDROID_AUTO',
-          autoLogged: true
-        }
-      }
+          detectedFrom,
+          callLogType: callLogType ?? null,
+          autoLogged: true,
+        },
+      },
     });
 
     res.status(201).json({
       status: 'success',
       message: 'Call auto-logged successfully',
       data: {
+        id: call.id,
         callId: call.id,
         leadId: finalLeadId,
         status: normalizedStatus,
         duration: call.duration,
-        autoLogged: true
-      }
+        provider: 'ANDROID_AUTO',
+        autoLogged: true,
+      },
     });
   } catch (error: any) {
     console.error('[AutoLog] Error:', error);

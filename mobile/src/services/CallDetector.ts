@@ -1,118 +1,165 @@
-/**
- * GlovaCRM Auto Call Detector
- *
- * Native module wrapper that:
- * 1. Starts monitoring Android phone state when a call is initiated
- * 2. Automatically detects call status (COMPLETED / MISSED / FAILED)
- * 3. Measures exact call duration in seconds
- * 4. Reports result to backend — no manual input from telecaller
- */
-
-import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
+import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 
 const { CallDetector: NativeCallDetector } = NativeModules;
 
-const CALL_STATE_EVENT = 'GlovaCRM_CallStateChanged';
-
-export interface CallResult {
-  status: 'COMPLETED' | 'MISSED' | 'FAILED' | 'BUSY';
-  duration: number; // seconds
+export interface NativeCallResult {
+  status: 'COMPLETED' | 'MISSED' | 'BUSY' | 'FAILED' | 'CANCELLED';
+  duration: number;
   phone: string;
+  callKey: string;
+  callLogType: number;
+  detectedFrom: 'ANDROID_CALL_LOG' | 'TELEPHONY_NO_LOG' | 'NONE';
+  found: boolean;
 }
 
-export interface CallLogPayload {
-  phone: string;
-  leadId?: string;
-  status: string;
-  duration: number;
-  notes?: string;
+export interface CallPermissionStatus {
+  phoneState: boolean;
+  callLog: boolean;
+  granted: boolean;
 }
 
 let eventEmitter: NativeEventEmitter | null = null;
 
 function getEmitter(): NativeEventEmitter | null {
-  if (Platform.OS !== 'android') return null;
-  if (!NativeCallDetector) return null;
+  if (Platform.OS !== 'android' || !NativeCallDetector) return null;
   if (!eventEmitter) {
     eventEmitter = new NativeEventEmitter(NativeCallDetector);
   }
   return eventEmitter;
 }
 
-/**
- * Start monitoring for a call to the given phone number.
- * Returns a Promise that resolves when the call ends with the result.
- */
-export function monitorCall(phoneNumber: string): Promise<CallResult> {
-  return new Promise((resolve, reject) => {
-    if (Platform.OS !== 'android' || !NativeCallDetector) {
-      reject(new Error('CallDetector only available on Android'));
-      return;
-    }
-
-    const emitter = getEmitter();
-    if (!emitter) {
-      reject(new Error('Could not get event emitter'));
-      return;
-    }
-
-    // Safety timeout: if no call state event in 5 minutes, resolve as MISSED
-    const safetyTimer = setTimeout(() => {
-      subscription.remove();
-      NativeCallDetector.stopMonitoring();
-      resolve({ status: 'MISSED', duration: 0, phone: phoneNumber });
-    }, 5 * 60 * 1000);
-
-    const subscription = emitter.addListener(CALL_STATE_EVENT, (result: CallResult) => {
-      clearTimeout(safetyTimer);
-      subscription.remove();
-      resolve(result);
-    });
-
-    // Start native monitoring
-    NativeCallDetector.startMonitoring(phoneNumber);
-  });
-}
-
-/**
- * Stop monitoring (call cancelled before dialing).
- */
-export function stopMonitoring(): void {
-  if (Platform.OS === 'android' && NativeCallDetector) {
-    NativeCallDetector.stopMonitoring();
+export async function hasCallDetectorPermissions(): Promise<CallPermissionStatus> {
+  if (Platform.OS !== 'android' || !NativeCallDetector?.hasRequiredPermissions) {
+    return { phoneState: false, callLog: false, granted: false };
+  }
+  try {
+    return await NativeCallDetector.hasRequiredPermissions();
+  } catch (err) {
+    console.warn('[CallDetector] Failed to check permissions:', err);
+    return { phoneState: false, callLog: false, granted: false };
   }
 }
 
-/**
- * Post the call result to GlovaCRM backend.
- * Finds the lead by phone number automatically.
- */
-export async function logCallToBackend(
-  backendUrl: string,
-  accessToken: string,
-  payload: CallLogPayload
-): Promise<boolean> {
+export function monitorCall(phoneNumber: string, callKey: string): Promise<NativeCallResult> {
+  return new Promise((resolve, reject) => {
+    const emitter = getEmitter();
+    if (!emitter || !NativeCallDetector) {
+      reject(new Error('CallDetector native module is only available on Android'));
+      return;
+    }
+
+    let settled = false;
+    const subscription = emitter.addListener('GlovaCRM_CallStateChanged', (event: NativeCallResult) => {
+      if (event.callKey && event.callKey !== callKey) {
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      subscription.remove();
+      resolve({
+        status: event.status,
+        duration: typeof event.duration === 'number' ? Math.max(0, Math.round(event.duration)) : 0,
+        phone: event.phone || phoneNumber,
+        callKey: event.callKey || callKey,
+        callLogType: event.callLogType ?? 0,
+        detectedFrom: event.detectedFrom || 'NONE',
+        found: Boolean(event.found),
+      });
+    });
+
+    try {
+      NativeCallDetector.startMonitoring(phoneNumber, callKey);
+    } catch (err) {
+      if (!settled) {
+        settled = true;
+        subscription.remove();
+        reject(err);
+      }
+    }
+  });
+}
+
+export async function checkAfterAppResume(): Promise<{
+  monitoring: boolean;
+  state: string;
+  sawOffHook?: boolean;
+}> {
+  if (Platform.OS !== 'android' || !NativeCallDetector?.checkAfterAppResume) {
+    return { monitoring: false, state: 'UNAVAILABLE' };
+  }
   try {
-    const response = await fetch(`${backendUrl}/api/calls/auto-log`, {
+    return await NativeCallDetector.checkAfterAppResume();
+  } catch (err) {
+    console.warn('[CallDetector] checkAfterAppResume failed:', err);
+    return { monitoring: false, state: 'ERROR' };
+  }
+}
+
+export function stopCallMonitoring(): void {
+  if (Platform.OS === 'android' && NativeCallDetector?.stopMonitoring) {
+    try {
+      NativeCallDetector.stopMonitoring();
+    } catch (err) {
+      console.warn('[CallDetector] stopMonitoring error:', err);
+    }
+  }
+}
+
+export async function logCallToBackend(params: {
+  apiBaseUrl: string;
+  accessToken: string | null;
+  phone: string;
+  leadId?: string;
+  status: 'COMPLETED' | 'MISSED' | 'BUSY' | 'FAILED';
+  duration: number;
+  callKey: string;
+  detectedFrom: string;
+}): Promise<{ ok: boolean; callId: string | null; leadId: string | null }> {
+  const { apiBaseUrl, accessToken, phone, leadId, status, duration, callKey, detectedFrom } = params;
+
+  if (!accessToken) {
+    return { ok: false, callId: null, leadId: leadId || null };
+  }
+
+  const safeDuration = status === 'COMPLETED' && duration > 0 ? Math.round(duration) : 0;
+  const safeStatus = safeDuration > 0 ? 'COMPLETED' : status === 'COMPLETED' ? 'MISSED' : status;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/calls/auto-log`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
-        phone: payload.phone,
-        leadId: payload.leadId,
-        status: payload.status,
-        duration: payload.duration,
+        phone,
+        leadId: leadId || undefined,
+        status: safeStatus,
+        duration: safeDuration,
         direction: 'OUTBOUND',
-        provider: 'ANDROID_AUTO',
-        notes: payload.notes || `Auto-logged: ${payload.status} call, ${payload.duration}s`,
+        callKey,
+        detectedFrom,
       }),
-      signal: AbortSignal.timeout(15000),
+      signal: controller.signal,
     });
-    return response.ok;
+
+    if (!res.ok) {
+      return { ok: false, callId: null, leadId: leadId || null };
+    }
+
+    const json = await res.json();
+    return {
+      ok: true,
+      callId: json?.data?.callId || json?.data?.id || null,
+      leadId: json?.data?.leadId || leadId || null,
+    };
   } catch (err) {
-    console.error('[CallDetector] Failed to log call:', err);
-    return false;
+    console.warn('[CallDetector] Auto-log fetch failed:', err);
+    return { ok: false, callId: null, leadId: leadId || null };
+  } finally {
+    clearTimeout(timer);
   }
 }

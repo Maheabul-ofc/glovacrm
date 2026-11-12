@@ -4,12 +4,21 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { TrendingUp, Trophy, Calendar, AlertTriangle, IndianRupee } from 'lucide-react';
 import api from '@/lib/api';
+import CallTimerModal from '@/components/CallTimerModal';
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [followUps, setFollowUps] = useState<any[]>([]);
   const [loadingFollowUps, setLoadingFollowUps] = useState(true);
+  const [callingLead, setCallingLead] = useState<{
+    id: string;
+    firstName: string;
+    lastName?: string;
+    phone: string;
+    status?: string;
+  } | null>(null);
+  const [isCallTimerOpen, setIsCallTimerOpen] = useState(false);
 
   useEffect(() => {
     fetchStats();
@@ -160,9 +169,22 @@ export default function DashboardPage() {
                     </td>
                     <td className="p-4">
                       <div className="flex items-center gap-2">
-                        <a href={`tel:${lead.phone}`} className="border border-gray-300 rounded-lg px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCallingLead({
+                              id: lead.id,
+                              firstName: lead.firstName,
+                              lastName: lead.lastName,
+                              phone: lead.phone,
+                              status: lead.status,
+                            });
+                            setIsCallTimerOpen(true);
+                          }}
+                          className="border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 rounded-lg px-3 py-1 text-sm font-medium transition-colors"
+                        >
                           Call
-                        </a>
+                        </button>
                         <a href={`https://wa.me/${lead.phone?.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="border border-gray-300 rounded-lg px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50">
                           WA
                         </a>
@@ -215,6 +237,19 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      <CallTimerModal
+        isOpen={isCallTimerOpen}
+        onClose={() => {
+          setIsCallTimerOpen(false);
+          setCallingLead(null);
+        }}
+        lead={callingLead}
+        onSuccess={() => {
+          fetchFollowUps();
+          fetchStats();
+        }}
+      />
     </div>
   );
 }

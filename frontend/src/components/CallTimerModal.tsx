@@ -1,7 +1,18 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Phone, PhoneOff, PhoneOutgoing, PhoneMissed, Clock, CheckCircle, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Phone,
+  PhoneOutgoing,
+  PhoneMissed,
+  Clock,
+  CheckCircle,
+  Lock,
+  Smartphone,
+  Calendar,
+  X,
+  AlertCircle,
+} from 'lucide-react';
 import api from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -13,164 +24,322 @@ export interface CallTimerModalProps {
     firstName: string;
     lastName?: string;
     phone: string;
+    status?: string;
   } | null;
   onSuccess: () => void;
 }
 
+interface SyncedCallState {
+  callId: string | null;
+  resolvedLeadId: string | null;
+  callKey: string;
+  status: 'COMPLETED' | 'MISSED' | 'BUSY' | 'FAILED' | 'NO_ANSWER';
+  duration: number;
+  detectedFrom: string;
+}
+
+const isInsideAndroidApp = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as any).ReactNativeWebView || (window as any).__GLOVA_ANDROID_APP__);
+};
+
 export default function CallTimerModal({ isOpen, onClose, lead, onSuccess }: CallTimerModalProps) {
-  const [phase, setPhase] = useState<'dialing' | 'active' | 'outcome'>('dialing');
-  const [elapsed, setElapsed] = useState(0); // seconds
-  const [outcome, setOutcome] = useState('COMPLETED');
+  const [inAndroidApp, setInAndroidApp] = useState(false);
+  const [phase, setPhase] = useState<'waiting' | 'feedback' | 'web_blocked'>('waiting');
+  const [syncedCall, setSyncedCall] = useState<SyncedCallState | null>(null);
+
+  // Post-call feedback fields (NEVER duration!)
+  const [unansweredReason, setUnansweredReason] = useState<'MISSED' | 'BUSY' | 'FAILED'>('MISSED');
   const [notes, setNotes] = useState('');
-  const [manualDuration, setManualDuration] = useState({ mins: '', secs: '' });
+  const [leadStatus, setLeadStatus] = useState('');
+  const [revenue, setRevenue] = useState('');
+  const [cancelReason, setCancelReason] = useState('');
+  const [nextFollowUpAt, setNextFollowUpAt] = useState('');
   const [saving, setSaving] = useState(false);
-  const [callId, setCallId] = useState<string | null>(null);
-  const [autoDetected, setAutoDetected] = useState(false);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Reset state every time modal opens
-  useEffect(() => {
-    if (isOpen && lead) {
-      setPhase('dialing');
-      setElapsed(0);
-      setOutcome('COMPLETED');
-      setNotes('');
-      setManualDuration({ mins: '', secs: '' });
-      setCallId(null);
-      setAutoDetected(false);
+  const activeCallKeyRef = React.useRef<string>('');
+  const processedCallKeyRef = React.useRef<string>('');
 
-      // Trigger tel: deep-link or React Native WebView bridge
-      if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-        (window as any).ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'INITIATE_CALL',
-          phone: lead.phone,
-          leadId: lead.id,
-          leadName: `${lead.firstName} ${lead.lastName || ''}`.trim(),
-        }));
-      } else if (lead.phone) {
-        window.location.href = `tel:${lead.phone}`;
+  const ensureAutoLoggedOnBackend = useCallback(
+    async (detail: any): Promise<{ callId: string | null; leadId: string | null }> => {
+      if (!lead) return { callId: null, leadId: null };
+      if (detail.autoSaved && detail.callId) {
+        return {
+          callId: detail.callId as string,
+          leadId: (detail.leadId || lead.id || null) as string | null,
+        };
       }
 
-      // Create a pending call record in DB
-      api.post('/calls/log', {
-        leadId: lead.id,
-        status: 'INITIATED',
-        duration: 0,
-      }).then(res => {
-        setCallId(res.data?.data?.id || null);
-      }).catch(() => {});
-    } else {
-      stopTimer();
+      try {
+        const res = await api.post('/calls/auto-log', {
+          phone: detail.phone || lead.phone,
+          leadId: (detail.leadId || lead.id) || undefined,
+          status: detail.status,
+          duration: detail.duration ?? 0,
+          direction: 'OUTBOUND',
+          callKey: detail.callKey,
+          detectedFrom: detail.detectedFrom || 'ANDROID_CALL_LOG',
+        });
+        return {
+          callId: (res.data?.data?.callId || res.data?.data?.id || null) as string | null,
+          leadId: (res.data?.data?.leadId || lead.id || null) as string | null,
+        };
+      } catch (err) {
+        console.error('Fallback auto-log error:', err);
+        return { callId: null, leadId: lead.id || null };
+      }
+    },
+    [lead]
+  );
+
+  // Reset & initiate Android dialer when modal opens
+  useEffect(() => {
+    if (!isOpen || !lead) return;
+
+    const android = isInsideAndroidApp();
+    setInAndroidApp(android);
+    setSyncedCall(null);
+    setUnansweredReason('MISSED');
+    setNotes('');
+    setLeadStatus('');
+    setRevenue('');
+    setCancelReason('');
+    setNextFollowUpAt('');
+    setSaving(false);
+
+    if (!android) {
+      setPhase('web_blocked');
+      return;
+    }
+
+    setPhase('waiting');
+
+    const callKey = `auto-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activeCallKeyRef.current = callKey;
+    processedCallKeyRef.current = '';
+    const accessToken = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
+
+    if ((window as any).ReactNativeWebView) {
+      (window as any).ReactNativeWebView.postMessage(
+        JSON.stringify({
+          type: 'INITIATE_CALL',
+          phone: lead.phone,
+          leadId: lead.id || undefined,
+          leadName: `${lead.firstName} ${lead.lastName || ''}`.trim(),
+          callKey,
+          accessToken,
+        })
+      );
     }
   }, [isOpen, lead]);
 
-  // Listen for auto-detected call duration from Android companion app wrapper
+  // Listen for OS-verified call result from Android wrapper
   useEffect(() => {
-    const handleNativeCallSynced = (e: any) => {
+    if (!isOpen || !lead) return;
+
+    const handleNativeCallSynced = async (e: any) => {
       const detail = e.detail || (e.data && typeof e.data === 'object' ? e.data : null);
-      if (detail && detail.duration !== undefined) {
-        stopTimer();
-        setPhase('outcome');
-        setManualDuration({
-          mins: String(Math.floor(detail.duration / 60)),
-          secs: String(detail.duration % 60),
-        });
-        if (detail.status) setOutcome(detail.status);
-        toast.success(`Android Call Log auto-detected: ${Math.floor(detail.duration / 60)}m ${detail.duration % 60}s!`);
+      if (!detail || !detail.callKey) return;
+
+      // Acknowledge delivery back to React Native so it stops re-sending
+      if ((window as any).ReactNativeWebView && detail.callKey) {
+        try {
+          (window as any).ReactNativeWebView.postMessage(
+            JSON.stringify({ type: 'CALL_SYNC_ACK', callKey: detail.callKey })
+          );
+        } catch (_) {}
       }
+
+      if (detail.callKey && activeCallKeyRef.current && detail.callKey !== activeCallKeyRef.current) {
+        return;
+      }
+      if (detail.callKey && processedCallKeyRef.current === detail.callKey) {
+        return;
+      }
+      if (detail.callKey) {
+        processedCallKeyRef.current = detail.callKey;
+      }
+
+      if (detail.cancelled) {
+        if (detail.permissionDenied) {
+          toast.error('Please allow Phone & Call Log permissions to track calls automatically.');
+        } else {
+          toast.info('Call cancelled — nothing was logged.');
+        }
+        onClose();
+        return;
+      }
+
+      const verifiedDuration = Math.max(0, parseInt(String(detail.duration ?? 0), 10) || 0);
+      const verifiedStatus: SyncedCallState['status'] =
+        verifiedDuration > 0
+          ? 'COMPLETED'
+          : detail.status === 'BUSY'
+            ? 'BUSY'
+            : detail.status === 'FAILED'
+              ? 'FAILED'
+              : 'MISSED';
+
+      const saved = await ensureAutoLoggedOnBackend({
+        ...detail,
+        status: verifiedStatus,
+        duration: verifiedDuration,
+      });
+
+      setSyncedCall({
+        callId: saved.callId,
+        resolvedLeadId: saved.leadId,
+        callKey: detail.callKey || '',
+        status: verifiedStatus,
+        duration: verifiedDuration,
+        detectedFrom: detail.detectedFrom || 'ANDROID_CALL_LOG',
+      });
+
+      if (verifiedDuration === 0) {
+        setUnansweredReason(
+          verifiedStatus === 'BUSY' ? 'BUSY' : verifiedStatus === 'FAILED' ? 'FAILED' : 'MISSED'
+        );
+      }
+
+      setPhase('feedback');
+      // Refresh parent lead/calls immediately because call is already auto-logged!
+      onSuccess();
     };
 
     window.addEventListener('GLOVA_CALL_SYNCED', handleNativeCallSynced);
     return () => {
       window.removeEventListener('GLOVA_CALL_SYNCED', handleNativeCallSynced);
     };
-  }, []);
+  }, [isOpen, lead, ensureAutoLoggedOnBackend, onClose, onSuccess]);
 
-  const startTimer = () => {
-    setPhase('active');
-    intervalRef.current = setInterval(() => {
-      setElapsed(prev => prev + 1);
-    }, 1000);
-  };
-
-  const stopTimer = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+  const handleCancelWaiting = () => {
+    if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
+      try {
+        (window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'CANCEL_CALL_MONITOR' }));
+      } catch (_) {}
     }
+    onClose();
   };
 
-  const handleCallAnswered = () => startTimer();
+  const handleSaveFeedback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lead || !syncedCall) return;
 
-  const handleEndCall = () => {
-    stopTimer();
-    setPhase('outcome');
-    setManualDuration({
-      mins: String(Math.floor(elapsed / 60)),
-      secs: String(elapsed % 60),
-    });
-  };
-
-  const getFinalDuration = () => {
-    const m = parseInt(manualDuration.mins || '0');
-    const s = parseInt(manualDuration.secs || '0');
-    return m * 60 + s;
-  };
-
-  const handleSave = async () => {
     setSaving(true);
-    const duration = getFinalDuration();
     try {
-      if (callId) {
-        await api.patch(`/calls/${callId}`, { status: outcome, duration, notes });
-      } else {
-        await api.post('/calls/log', { leadId: lead?.id, status: outcome, duration, notes: notes || undefined });
+      const promises: Promise<any>[] = [];
+
+      // 1. Save notes / unanswered reason tag (backend strictly blocks editing duration or faking COMPLETED)
+      const isUnanswered = syncedCall.duration === 0;
+      const reasonChanged = isUnanswered && unansweredReason !== syncedCall.status;
+      if (syncedCall.callId && (notes.trim() || reasonChanged)) {
+        promises.push(
+          api.patch(`/calls/${syncedCall.callId}`, {
+            ...(reasonChanged ? { status: unansweredReason } : {}),
+            ...(notes.trim() ? { notes: notes.trim() } : {}),
+          })
+        );
       }
-      toast.success(`Call logged — ${outcome.toLowerCase()} (${Math.floor(duration / 60)}m ${duration % 60}s)`);
+
+      const targetLeadId = syncedCall.resolvedLeadId || lead.id;
+
+      // 2. Optionally update lead status
+      if (leadStatus && targetLeadId) {
+        promises.push(
+          api.patch(`/leads/${targetLeadId}/status`, {
+            status: leadStatus,
+            revenueAmount: leadStatus === 'CONVERTED' && revenue ? Number(revenue) : undefined,
+            cancelReason: leadStatus === 'CLOSED' && cancelReason ? cancelReason : undefined,
+            notes: notes.trim() || undefined,
+          })
+        );
+      }
+
+      // 3. Optionally schedule next follow-up
+      if (nextFollowUpAt && targetLeadId) {
+        promises.push(
+          api.post(`/leads/${targetLeadId}/follow-up`, {
+            nextFollowUpAt: new Date(nextFollowUpAt).toISOString(),
+            note: notes.trim() || 'Follow-up scheduled after call',
+          })
+        );
+      }
+
+      await Promise.all(promises);
+      toast.success('Post-call notes & follow-up saved!');
       onSuccess();
       onClose();
-    } catch {
-      toast.error('Failed to save call. Please try again.');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to save follow-up notes.');
     } finally {
       setSaving(false);
     }
   };
 
-  const formatTime = (s: number) => {
-    const m = Math.floor(s / 60).toString().padStart(2, '0');
-    const sec = (s % 60).toString().padStart(2, '0');
-    return `${m}:${sec}`;
+  const formatDuration = (secs: number) => {
+    if (!secs || secs <= 0) return '0s';
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
   if (!isOpen || !lead) return null;
 
-  const outcomeOptions = [
-    { value: 'COMPLETED', label: '✅ Completed', color: 'bg-green-50 border-green-300 text-green-800' },
-    { value: 'MISSED', label: '📵 Missed / No Answer', color: 'bg-red-50 border-red-300 text-red-800' },
-    { value: 'FAILED', label: '⚠️ Failed / Busy', color: 'bg-amber-50 border-amber-300 text-amber-800' },
-  ];
-
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="bg-gradient-to-br from-teal-600 to-teal-700 px-6 py-5 text-white">
+        <div className="bg-gradient-to-br from-teal-600 to-teal-700 px-6 py-4 text-white flex-shrink-0">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-teal-100 text-xs font-medium uppercase tracking-wider mb-1">Outbound Call</p>
-              <h2 className="text-xl font-bold">{lead.firstName} {lead.lastName || ''}</h2>
-              <p className="text-teal-200 text-sm mt-0.5">{lead.phone}</p>
+              <p className="text-teal-100 text-[11px] font-semibold uppercase tracking-wider mb-0.5 flex items-center gap-1">
+                <Lock className="w-3 h-3" /> Auto-Tracked Call
+              </p>
+              <h2 className="text-lg font-bold leading-tight">
+                {lead.firstName} {lead.lastName || ''}
+              </h2>
+              <p className="text-teal-100 text-sm mt-0.5 font-mono">{lead.phone}</p>
             </div>
-            <button onClick={() => { stopTimer(); onClose(); }} className="text-teal-200 hover:text-white transition-colors p-1">
+            <button
+              onClick={phase === 'waiting' ? handleCancelWaiting : onClose}
+              className="text-teal-200 hover:text-white transition-colors p-1"
+              aria-label="Close"
+            >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        <div className="p-6">
-          {/* PHASE: Dialing */}
-          {phase === 'dialing' && (
-            <div className="text-center space-y-5">
+        <div className="p-5 overflow-y-auto">
+          {/* PHASE: Desktop Web Blocked */}
+          {phase === 'web_blocked' && (
+            <div className="text-center space-y-4 py-2">
+              <div className="mx-auto w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center border border-amber-200">
+                <Smartphone className="w-8 h-8 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Use GlovaCRM Android App to Call</h3>
+                <p className="text-sm text-gray-600 mt-1.5 leading-relaxed">
+                  Manual call duration entry is disabled to keep call logs 100% genuine. Open this lead in the{' '}
+                  <span className="font-semibold text-teal-700">GlovaCRM Android App</span> to dial and auto-record exact call duration.
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 text-sm font-mono text-gray-800">
+                {lead.phone}
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-semibold rounded-xl text-sm transition-colors cursor-pointer"
+              >
+                Got it
+              </button>
+            </div>
+          )}
+
+          {/* PHASE: Waiting for Android dialer call to finish */}
+          {phase === 'waiting' && inAndroidApp && (
+            <div className="text-center space-y-5 py-2">
               <div className="relative mx-auto w-20 h-20">
                 <div className="absolute inset-0 bg-teal-100 rounded-full animate-ping opacity-60"></div>
                 <div className="relative w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center border-2 border-teal-200">
@@ -178,132 +347,194 @@ export default function CallTimerModal({ isOpen, onClose, lead, onSuccess }: Cal
                 </div>
               </div>
               <div>
-                <p className="text-gray-900 font-semibold text-lg">Connecting...</p>
-                <p className="text-gray-500 text-sm mt-1">Your native dialer has opened. Tap below when the call is answered.</p>
+                <p className="text-gray-900 font-bold text-base">Dialing via Phone App...</p>
+                <p className="text-gray-500 text-xs mt-1.5 leading-relaxed">
+                  Your phone dialer has opened. Complete the call — GlovaCRM is automatically tracking status and exact talk duration in the background.
+                </p>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={handleCallAnswered}
-                  className="flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-medium py-3 rounded-xl transition-all shadow-sm cursor-pointer"
-                >
-                  <CheckCircle className="w-4 h-4" /> Call Answered
-                </button>
-                <button
-                  onClick={() => { setOutcome('MISSED'); setPhase('outcome'); setManualDuration({ mins: '0', secs: '0' }); }}
-                  className="flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3 rounded-xl transition-all cursor-pointer"
-                >
-                  <PhoneMissed className="w-4 h-4" /> No Answer
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* PHASE: Active (timer running) */}
-          {phase === 'active' && (
-            <div className="text-center space-y-5">
-              <div className="bg-teal-50 rounded-xl py-6 border border-teal-100">
-                <p className="text-teal-600 text-xs font-semibold uppercase tracking-wider mb-2">Call Duration</p>
-                <p className="text-5xl font-mono font-bold text-teal-700 tracking-tight">{formatTime(elapsed)}</p>
-              </div>
-              <div className="flex items-center justify-center gap-2 text-green-600 text-sm font-medium">
-                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                Call in progress
+              <div className="flex items-center justify-center gap-2 text-xs text-teal-700 bg-teal-50 border border-teal-200 rounded-xl py-2.5 px-3 font-medium">
+                <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>OS Call Log auto-sync active</span>
               </div>
               <button
-                onClick={handleEndCall}
-                className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3.5 rounded-xl transition-all shadow-sm cursor-pointer"
+                type="button"
+                onClick={handleCancelWaiting}
+                className="w-full py-2.5 border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-xl text-xs font-medium transition-colors cursor-pointer"
               >
-                <PhoneOff className="w-5 h-5" /> End Call
+                Cancel Tracking
               </button>
             </div>
           )}
 
-          {/* PHASE: Outcome form */}
-          {phase === 'outcome' && (
-            <div className="space-y-4">
-              <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                {autoDetected && (
-                  <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-teal-50 border border-teal-200 rounded-lg">
-                    <span className="text-teal-600 text-sm">🔒</span>
-                    <span className="text-teal-700 text-xs font-semibold">Auto-detected by Android — cannot be edited</span>
+          {/* PHASE: Post-Call Verified Summary + Notes / Lead Update */}
+          {phase === 'feedback' && syncedCall && (
+            <form onSubmit={handleSaveFeedback} className="space-y-4">
+              {/* Locked Call Verification Card */}
+              <div
+                className={`rounded-xl p-4 border ${
+                  syncedCall.duration > 0
+                    ? 'bg-emerald-50 border-emerald-200'
+                    : 'bg-red-50 border-red-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {syncedCall.duration > 0 ? (
+                      <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                    ) : (
+                      <PhoneMissed className="w-5 h-5 text-red-600 flex-shrink-0" />
+                    )}
+                    <div>
+                      <p
+                        className={`text-xs font-bold uppercase tracking-wider ${
+                          syncedCall.duration > 0 ? 'text-emerald-800' : 'text-red-800'
+                        }`}
+                      >
+                        {syncedCall.duration > 0 ? 'Call Completed' : 'Not Answered'}
+                      </p>
+                      <p className="text-[11px] text-gray-600 flex items-center gap-1 mt-0.5">
+                        <Lock className="w-3 h-3" /> Verified by Android Call Log
+                      </p>
+                    </div>
                   </div>
-                )}
-                <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-2">Call Duration</p>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <input
-                      type="number" min="0" max="999"
-                      value={manualDuration.mins}
-                      onChange={e => !autoDetected && setManualDuration(p => ({ ...p, mins: e.target.value }))}
-                      readOnly={autoDetected}
-                      className={`w-full border rounded-lg px-3 py-2 text-center font-mono text-lg font-bold outline-none ${autoDetected ? "border-teal-300 bg-teal-50 text-teal-800 cursor-not-allowed" : "border-gray-200 text-gray-800 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"}`}
-                    />
-                    <p className="text-[10px] text-gray-400 text-center mt-0.5">minutes</p>
-                  </div>
-                  <span className="text-gray-400 font-bold text-xl mb-3">:</span>
-                  <div className="flex-1">
-                    <input
-                      type="number" min="0" max="59"
-                      value={manualDuration.secs}
-                      onChange={e => !autoDetected && setManualDuration(p => ({ ...p, secs: e.target.value }))}
-                      readOnly={autoDetected}
-                      className={`w-full border rounded-lg px-3 py-2 text-center font-mono text-lg font-bold outline-none ${autoDetected ? "border-teal-300 bg-teal-50 text-teal-800 cursor-not-allowed" : "border-gray-200 text-gray-800 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"}`}
-                    />
-                    <p className="text-[10px] text-gray-400 text-center mt-0.5">seconds</p>
-                  </div>
-                </div>
-                {elapsed > 0 && (
-                  <p className="text-[11px] text-teal-600 text-center mt-2">Timer recorded: {formatTime(elapsed)} — edit if needed</p>
-                )}
-              </div>
-
-              <div>
-                <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-2">Call Outcome</p>
-                <div className="space-y-2">
-                  {outcomeOptions.map(opt => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setOutcome(opt.value)}
-                      className={`w-full text-left px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all cursor-pointer ${
-                        outcome === opt.value ? opt.color + ' border-2' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
+                  <div className="text-right">
+                    <div
+                      className={`text-xl font-mono font-extrabold flex items-center gap-1 ${
+                        syncedCall.duration > 0 ? 'text-emerald-700' : 'text-red-700'
                       }`}
                     >
-                      {opt.label}
-                    </button>
-                  ))}
+                      <Clock className="w-4 h-4" />
+                      {formatDuration(syncedCall.duration)}
+                    </div>
+                    <p className="text-[10px] text-gray-500">Locked · Saved</p>
+                  </div>
                 </div>
               </div>
 
+              {/* For 0s unanswered calls only: allow tagging Missed vs Busy vs Failed (NEVER Completed) */}
+              {syncedCall.duration === 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                    Unanswered Reason (0s Locked)
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: 'MISSED' as const, label: 'No Answer' },
+                      { value: 'BUSY' as const, label: 'Line Busy' },
+                      { value: 'FAILED' as const, label: 'Switched Off' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setUnansweredReason(opt.value)}
+                        className={`py-2 px-2 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
+                          unansweredReason === opt.value
+                            ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                            : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Notes */}
               <div>
-                <label className="text-xs text-gray-500 font-medium uppercase tracking-wider">Notes (optional)</label>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                  Call Notes (Optional)
+                </label>
                 <textarea
                   rows={2}
                   value={notes}
-                  onChange={e => setNotes(e.target.value)}
-                  placeholder="Add any call notes here..."
-                  className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none resize-none"
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Summary of customer conversation..."
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none resize-none"
                 />
               </div>
 
-              <div className="flex gap-3 pt-1">
+              {/* Lead Status Update */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                  Update Lead Status (Optional)
+                </label>
+                <select
+                  value={leadStatus}
+                  onChange={(e) => setLeadStatus(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:ring-2 focus:ring-teal-500 outline-none"
+                >
+                  <option value="">-- Keep Current ({lead.status || 'Active'}) --</option>
+                  <option value="FOLLOW_UP">Follow Up</option>
+                  <option value="INTERESTED">Interested</option>
+                  <option value="NOT_INTERESTED">Not Interested</option>
+                  <option value="CONVERTED">Converted / Won</option>
+                  <option value="CLOSED">Closed / Lost</option>
+                </select>
+              </div>
+
+              {leadStatus === 'CONVERTED' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                    Revenue Amount (₹)
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    value={revenue}
+                    onChange={(e) => setRevenue(e.target.value)}
+                    placeholder="e.g. 15000"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
+                </div>
+              )}
+
+              {leadStatus === 'CLOSED' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                    Closure Reason
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    placeholder="Reason for closing lead..."
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Next Follow-up */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-teal-600" /> Next Follow-up (Optional)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={nextFollowUpAt}
+                  onChange={(e) => setNextFollowUpAt(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:ring-2 focus:ring-teal-500 outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2.5 pt-1">
                 <button
                   type="button"
-                  onClick={() => { stopTimer(); onClose(); }}
-                  className="flex-1 py-3 border border-gray-200 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-50 transition-all cursor-pointer"
+                  onClick={onClose}
+                  className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors cursor-pointer"
                 >
-                  Cancel
+                  Done
                 </button>
                 <button
-                  type="button"
-                  onClick={handleSave}
+                  type="submit"
                   disabled={saving}
-                  className="flex-1 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-medium transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+                  className="flex-1 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
                 >
-                  {saving ? 'Saving...' : 'Save Call'}
+                  {saving ? 'Saving...' : 'Save Notes'}
                 </button>
               </div>
-            </div>
+            </form>
           )}
         </div>
       </div>

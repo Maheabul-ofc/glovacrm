@@ -1,9 +1,15 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Phone, Search, Filter, PhoneIncoming, PhoneOutgoing, PhoneMissed, PlayCircle } from 'lucide-react';
+import { Phone, Search, Filter, PhoneIncoming, PhoneOutgoing, PhoneMissed, PlayCircle, ShieldCheck } from 'lucide-react';
 import api from '@/lib/api';
-import { toast } from 'sonner';
+import CallTimerModal from '@/components/CallTimerModal';
+
+const getRecordingSrc = (recordingUrl: string) => {
+  if (/^https?:\/\//i.test(recordingUrl)) return recordingUrl;
+  const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/api\/?$/, '');
+  return `${base}${recordingUrl}`;
+};
 
 export default function CallsPage() {
   const [calls, setCalls] = useState<any[]>([]);
@@ -11,15 +17,16 @@ export default function CallsPage() {
   const [search, setSearch] = useState('');
   const [isDialerOpen, setIsDialerOpen] = useState(false);
   const [dialPhone, setDialPhone] = useState('');
-
-  const [showOutcome, setShowOutcome] = useState(false);
-  const [outcomeStatus, setOutcomeStatus] = useState('COMPLETED');
-  const [durationMins, setDurationMins] = useState('');
-  const [durationSecs, setDurationSecs] = useState('');
-  
   const [leads, setLeads] = useState<any[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
-  const [recordingFile, setRecordingFile] = useState<File | null>(null);
+  const [callingLead, setCallingLead] = useState<{
+    id: string;
+    firstName: string;
+    lastName?: string;
+    phone: string;
+    status?: string;
+  } | null>(null);
+  const [isCallTimerOpen, setIsCallTimerOpen] = useState(false);
   const [activeAudio, setActiveAudio] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,7 +59,9 @@ export default function CallsPage() {
   };
 
   const getCallIcon = (direction: string, status: string) => {
-    if (status === 'MISSED') return <PhoneMissed className="w-4 h-4 text-red-500" />;
+    if (status === 'MISSED' || status === 'BUSY' || status === 'FAILED' || status === 'NO_ANSWER') {
+      return <PhoneMissed className="w-4 h-4 text-red-500" />;
+    }
     if (direction === 'INBOUND') return <PhoneIncoming className="w-4 h-4 text-blue-500" />;
     return <PhoneOutgoing className="w-4 h-4 text-emerald-500" />;
   };
@@ -64,52 +73,29 @@ export default function CallsPage() {
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
-  const handleDial = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!dialPhone && !selectedLeadId) return;
-    
-    // 1. Trigger the native deep-link dialer
-    if (dialPhone) {
-      window.location.href = `tel:${dialPhone}`;
+  const handleSelectLead = (leadId: string) => {
+    setSelectedLeadId(leadId);
+    const found = leads.find((l) => l.id === leadId);
+    if (found?.phone) {
+      setDialPhone(found.phone);
     }
-    
-    // 2. Switch UI to outcome form
-    setShowOutcome(true);
   };
 
-  const handleLogOutcome = async (e: React.FormEvent) => {
+  const handleStartAutoCall = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      setLoading(true);
-      const totalSeconds = (parseInt(durationMins) || 0) * 60 + (parseInt(durationSecs) || 0);
+    const matchedLead = leads.find((l) => l.id === selectedLeadId);
+    const phoneToDial = (dialPhone || matchedLead?.phone || '').trim();
+    if (!phoneToDial) return;
 
-      const formData = new FormData();
-      if (dialPhone) formData.append('toPhone', dialPhone);
-      if (selectedLeadId) formData.append('leadId', selectedLeadId);
-      formData.append('status', outcomeStatus);
-      formData.append('duration', totalSeconds.toString());
-      if (recordingFile) {
-        formData.append('recording', recordingFile);
-      }
-
-      await api.post('/calls/log', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
-      toast.success('Call logged successfully!');
-      setIsDialerOpen(false);
-      setShowOutcome(false);
-      setDialPhone('');
-      setSelectedLeadId('');
-      setRecordingFile(null);
-      setDurationMins('');
-      setDurationSecs('');
-      setOutcomeStatus('COMPLETED');
-      fetchCalls();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to log call. Please try again.');
-      setLoading(false);
-    }
+    setCallingLead({
+      id: matchedLead?.id || '',
+      firstName: matchedLead?.firstName || 'Outbound',
+      lastName: matchedLead?.lastName || 'Call',
+      phone: phoneToDial,
+      status: matchedLead?.status,
+    });
+    setIsDialerOpen(false);
+    setIsCallTimerOpen(true);
   };
 
   return (
@@ -118,13 +104,13 @@ export default function CallsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Call Logs</h1>
           <p className="mt-1 text-sm text-gray-500">
-            View all incoming and outgoing calls made by your team.
+            View all automatically tracked and verified calls made by your team.
           </p>
         </div>
         <div className="mt-4 sm:mt-0 flex space-x-3">
-          <button 
+          <button
             onClick={() => {
-              setShowOutcome(false);
+              setSelectedLeadId('');
               setDialPhone('');
               setIsDialerOpen(true);
             }}
@@ -188,9 +174,22 @@ export default function CallsPage() {
                       <div className="flex items-center gap-2">
                         {getCallIcon(call.direction, call.status)}
                         <span className="text-sm font-medium text-gray-900 capitalize">
-                          {call.status.toLowerCase()}
+                          {call.status.toLowerCase().replace(/_/g, ' ')}
                         </span>
+                        {call.provider === 'ANDROID_AUTO' && (
+                          <span
+                            title="Duration & status automatically verified from phone call log"
+                            className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          >
+                            <ShieldCheck className="w-3 h-3" /> Auto
+                          </span>
+                        )}
                       </div>
+                      {call.notes && (
+                        <div className="text-xs text-gray-500 mt-0.5 max-w-xs truncate" title={call.notes}>
+                          {call.notes}
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900 font-medium">
@@ -203,7 +202,7 @@ export default function CallsPage() {
                         {call.user?.firstName || 'System'}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
                       {formatDuration(call.duration)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -213,11 +212,11 @@ export default function CallsPage() {
                       {call.recordingUrl ? (
                         activeAudio === call.recordingUrl ? (
                           <div className="flex justify-end items-center gap-2">
-                            <audio 
-                              controls 
-                              autoPlay 
-                              src={`http://localhost:5000${call.recordingUrl}`} 
-                              className="h-8 w-48" 
+                            <audio
+                              controls
+                              autoPlay
+                              src={getRecordingSrc(call.recordingUrl)}
+                              className="h-8 w-48"
                             />
                             <button onClick={() => setActiveAudio(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
                           </div>
@@ -238,128 +237,77 @@ export default function CallsPage() {
         </div>
       </div>
 
-      {/* Dialer & Outcome Modal */}
+      {/* Lead / Phone Dialer Modal (launches TeleCRM-style Auto Call Tracking) */}
       {isDialerOpen && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden transition-all">
-            <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gray-50">
               <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <Phone className="w-5 h-5 text-teal-600" /> {showOutcome ? 'Log Call Outcome' : 'Web Dialer'}
+                <Phone className="w-5 h-5 text-teal-600" /> Auto-Tracked Dialer
               </h3>
-              <button onClick={() => setIsDialerOpen(false)} className="text-gray-400 hover:text-gray-600">×</button>
+              <button onClick={() => setIsDialerOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
             </div>
-            
-            {!showOutcome ? (
-              <form onSubmit={handleDial} className="p-6 space-y-6 text-center">
-                <div>
-                  <input 
-                    type="tel" 
-                    value={dialPhone} 
-                    onChange={e => setDialPhone(e.target.value)} 
-                    className="w-full text-center text-2xl tracking-widest border border-gray-300 rounded-lg px-3 py-4 text-gray-900 font-mono focus:ring-2 focus:ring-teal-500 outline-none bg-white" 
-                    placeholder="+91" 
-                    autoFocus
-                  />
-                </div>
-                <div className="pt-2 text-sm text-gray-500 mb-4">
-                  This will open your computer's native phone app.
-                </div>
-                <div className="pt-2">
-                  <button type="submit" disabled={!dialPhone} className="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center mx-auto transition-colors shadow-lg shadow-emerald-500/30 disabled:opacity-50">
-                    <Phone className="w-8 h-8 fill-current" />
-                  </button>
-                </div>
-                <div className="text-sm text-gray-400 mt-2 cursor-pointer hover:text-teal-600" onClick={() => setShowOutcome(true)}>
-                  Skip dialing, just log a call
-                </div>
-              </form>
-            ) : (
-              <form onSubmit={handleLogOutcome} className="p-6 space-y-5">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Lead</label>
-                  <select 
-                    value={selectedLeadId}
-                    onChange={(e) => setSelectedLeadId(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 bg-white focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none sm:text-sm"
-                  >
-                    <option value="">-- Select a Lead (Optional) --</option>
-                    {leads.map(lead => (
-                      <option key={lead.id} value={lead.id}>
-                        {lead.firstName} {lead.lastName} {lead.phone ? `(${lead.phone})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Call Status</label>
-                  <select 
-                    value={outcomeStatus}
-                    onChange={(e) => setOutcomeStatus(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 bg-white focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none sm:text-sm"
-                  >
-                    <option value="COMPLETED">Completed</option>
-                    <option value="NO_ANSWER">No Answer</option>
-                    <option value="BUSY">Busy</option>
-                    <option value="MISSED">Missed</option>
-                  </select>
-                </div>
+            <form onSubmit={handleStartAutoCall} className="p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1 uppercase tracking-wide">
+                  Select Lead (Optional)
+                </label>
+                <select
+                  value={selectedLeadId}
+                  onChange={(e) => handleSelectLead(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 bg-white focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none text-sm"
+                >
+                  <option value="">-- Choose a Lead or type number below --</option>
+                  {leads.map((lead) => (
+                    <option key={lead.id} value={lead.id}>
+                      {lead.firstName} {lead.lastName} {lead.phone ? `(${lead.phone})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                {outcomeStatus === 'COMPLETED' && (
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Duration</label>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 relative">
-                        <input 
-                          type="number" 
-                          min="0"
-                          value={durationMins}
-                          onChange={(e) => setDurationMins(e.target.value)}
-                          placeholder="00"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 bg-white focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none sm:text-sm text-center"
-                        />
-                        <span className="absolute right-3 top-2 text-xs text-gray-400 font-medium">MIN</span>
-                      </div>
-                      <span className="text-gray-500 font-bold">:</span>
-                      <div className="flex-1 relative">
-                        <input 
-                          type="number" 
-                          min="0"
-                          max="59"
-                          value={durationSecs}
-                          onChange={(e) => setDurationSecs(e.target.value)}
-                          placeholder="00"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 bg-white focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none sm:text-sm text-center"
-                        />
-                        <span className="absolute right-3 top-2 text-xs text-gray-400 font-medium">SEC</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1 uppercase tracking-wide">
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  value={dialPhone}
+                  onChange={(e) => setDialPhone(e.target.value)}
+                  className="w-full text-center text-xl tracking-wider border border-gray-300 rounded-lg px-3 py-3 text-gray-900 font-mono focus:ring-2 focus:ring-teal-500 outline-none bg-white"
+                  placeholder="+91 9876543210"
+                  autoFocus
+                />
+              </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Recording (Optional)</label>
-                  <input 
-                    type="file"
-                    accept="audio/*,video/*"
-                    onChange={(e) => setRecordingFile(e.target.files ? e.target.files[0] : null)}
-                    className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100 border border-gray-300 rounded-lg bg-white p-1"
-                  />
-                </div>
+              <p className="text-xs text-gray-500 text-center">
+                Opens your Android phone dialer and automatically verifies call outcome &amp; talk duration.
+              </p>
 
-                <div className="pt-4">
-                  <button 
-                    type="submit" 
-                    className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition-colors"
-                  >
-                    Save Call Log
-                  </button>
-                </div>
-              </form>
-            )}
+              <button
+                type="submit"
+                disabled={!dialPhone.trim()}
+                className="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center mx-auto transition-colors shadow-lg shadow-emerald-500/30 disabled:opacity-50"
+                title="Start Auto-Tracked Call"
+              >
+                <Phone className="w-7 h-7 fill-current" />
+              </button>
+            </form>
           </div>
         </div>
       )}
+
+      {/* TeleCRM-Style Auto Call & Post-Call Feedback Modal */}
+      <CallTimerModal
+        isOpen={isCallTimerOpen}
+        onClose={() => {
+          setIsCallTimerOpen(false);
+          setCallingLead(null);
+        }}
+        lead={callingLead}
+        onSuccess={() => fetchCalls(true)}
+      />
     </div>
   );
 }

@@ -434,6 +434,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                         const statusColors: Record<string, string> = {
                           COMPLETED: 'bg-green-100 text-green-800',
                           MISSED: 'bg-red-100 text-red-800',
+                          BUSY: 'bg-orange-100 text-orange-800',
+                          NO_ANSWER: 'bg-red-100 text-red-800',
                           FAILED: 'bg-amber-100 text-amber-800',
                           INITIATED: 'bg-blue-100 text-blue-800',
                           IN_PROGRESS: 'bg-teal-100 text-teal-800',
@@ -441,7 +443,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                         return (
                           <div key={call.id} className="flex items-start gap-3 p-4 bg-white border border-gray-100 rounded-xl hover:border-gray-200 transition-all">
                             <div className="mt-0.5">
-                              {call.status === 'MISSED' || call.status === 'FAILED'
+                              {call.status === 'MISSED' || call.status === 'FAILED' || call.status === 'BUSY' || call.status === 'NO_ANSWER'
                                 ? <PhoneMissed className="w-4 h-4 text-red-400" />
                                 : <PhoneOutgoing className="w-4 h-4 text-teal-500" />}
                             </div>
@@ -450,9 +452,15 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide ${
                                   statusColors[call.status] || 'bg-gray-100 text-gray-600'
                                 }`}>
-                                  {call.status}
+                                  {call.status.replace(/_/g, ' ')}
                                 </span>
-                                <span className="text-xs text-gray-400">{call.provider}</span>
+                                {call.provider === 'ANDROID_AUTO' ? (
+                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    Auto-Verified
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-gray-400">{call.provider}</span>
+                                )}
                               </div>
                               {call.duration > 0 && (
                                 <div className="flex items-center gap-1 mt-1.5 text-sm text-gray-700 font-medium">
