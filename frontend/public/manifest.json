@@ -4,8 +4,8 @@
   "description": "Comprehensive CRM with Leads Pipeline, WhatsApp Inbox, and Call Duration Tracking",
   "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0d9488",
+  "background_color": "#1D293D",
+  "theme_color": "#1D293D",
   "orientation": "portrait-primary",
   "icons": [
     {
