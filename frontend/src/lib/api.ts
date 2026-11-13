@@ -25,4 +25,31 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// Auto-retry on 429 (rate-limited) and 503 (waking up) with exponential backoff
+const RETRY_DELAYS = [2000, 4000, 8000];
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config;
+    if (!config) return Promise.reject(error);
+
+    // Initialize retry count
+    config.__retryCount = config.__retryCount || 0;
+
+    const status = error.response?.status;
+    const isRetryable = status === 429 || status === 503;
+
+    if (isRetryable && config.__retryCount < RETRY_DELAYS.length) {
+      const delay = RETRY_DELAYS[config.__retryCount];
+      config.__retryCount += 1;
+      console.log(`[api] ${status} on ${config.url}, retry #${config.__retryCount} in ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+      return api(config);
+    }
+
+    return Promise.reject(error);
+  }
+);
+
 export default api;

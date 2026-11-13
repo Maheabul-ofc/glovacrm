@@ -38,52 +38,77 @@ export default function LoginPage() {
       setWaitingMsg('⏳ Server is waking up — this can take 20–30 seconds on first load. Please wait...');
     }, 5000);
 
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email: email.trim(), password }),
-        signal: AbortSignal.timeout(65000), // 65s client timeout
-      });
+    const MAX_LOGIN_RETRIES = 3;
+    const RETRY_DELAYS = [3000, 6000, 10000];
+    let lastError: any = null;
 
-      clearTimeout(waitTimer);
-      setWaitingMsg(null);
+    for (let attempt = 0; attempt <= MAX_LOGIN_RETRIES; attempt++) {
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email: email.trim(), password }),
+          signal: AbortSignal.timeout(65000), // 65s client timeout
+        });
 
-      const data = await response.json().catch(() => null);
+        // If 429/503 and retries remain, wait and retry automatically
+        if ((response.status === 429 || response.status === 503) && attempt < MAX_LOGIN_RETRIES) {
+          const delay = RETRY_DELAYS[attempt] || 5000;
+          setWaitingMsg(`⏳ Server is waking up — retrying automatically in ${Math.round(delay / 1000)}s...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
 
-      if (!response.ok) {
-        const errorDetail = data?.error || `Server returned error HTTP ${response.status}`;
-        throw new Error(errorDetail);
+        clearTimeout(waitTimer);
+        setWaitingMsg(null);
+
+        const data = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          const errorDetail = data?.error || `Server returned error HTTP ${response.status}`;
+          throw new Error(errorDetail);
+        }
+
+        if (!data?.accessToken) {
+          throw new Error('No access token received from server.');
+        }
+
+        // Save token
+        localStorage.setItem('accessToken', data.accessToken);
+        setSuccessMsg('Login successful! Redirecting to workspace...');
+
+        // Redirect cleanly without popup
+        const destination = data.user?.role === 'SUPER_ADMIN' ? '/admin' : '/dashboard';
+        setTimeout(() => {
+          window.location.href = destination;
+        }, 300);
+        return; // success — exit
+      } catch (err: any) {
+        lastError = err;
+        // On timeout/network error with retries left, retry
+        if (attempt < MAX_LOGIN_RETRIES && (err.name === 'TimeoutError' || err.name === 'AbortError' || err.message?.includes('fetch'))) {
+          const delay = RETRY_DELAYS[attempt] || 5000;
+          setWaitingMsg(`⏳ Connection issue — retrying automatically in ${Math.round(delay / 1000)}s...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
       }
-
-      if (!data?.accessToken) {
-        throw new Error('No access token received from server.');
-      }
-
-      // Save token
-      localStorage.setItem('accessToken', data.accessToken);
-      setSuccessMsg('Login successful! Redirecting to workspace...');
-
-      // Redirect cleanly without popup
-      const destination = data.user?.role === 'SUPER_ADMIN' ? '/admin' : '/dashboard';
-      setTimeout(() => {
-        window.location.href = destination;
-      }, 300);
-    } catch (err: any) {
-      clearTimeout(waitTimer);
-      setWaitingMsg(null);
-      console.error('Login error:', err);
-      let msg = err.message || 'Login failed. Please check credentials or backend.';
-      if (msg.includes('429')) {
-        msg = 'Too many requests — server is busy. Please wait 30 seconds and try again.';
-      } else if (err.name === 'TimeoutError' || msg.includes('timeout') || msg.includes('abort')) {
-        msg = 'Server is taking too long to respond. Please wait a moment and try again.';
-      }
-      setErrorMsg(msg);
-      setIsLoading(false);
     }
+
+    // All retries exhausted
+    clearTimeout(waitTimer);
+    setWaitingMsg(null);
+    console.error('Login error after retries:', lastError);
+    let msg = lastError?.message || 'Login failed. Please check credentials or backend.';
+    if (msg.includes('429') || msg.includes('busy')) {
+      msg = 'Server is still waking up. Please wait 30 seconds and try again.';
+    } else if (lastError?.name === 'TimeoutError' || msg.includes('timeout') || msg.includes('abort')) {
+      msg = 'Server is taking too long to respond. Please wait a moment and try again.';
+    }
+    setErrorMsg(msg);
+    setIsLoading(false);
   };
 
   return (

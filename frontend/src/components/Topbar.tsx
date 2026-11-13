@@ -15,7 +15,7 @@ export default function Topbar() {
 
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
+    const interval = setInterval(fetchNotifications, 120000); // Poll every 2 min (was 30s — too aggressive for free tier)
     return () => clearInterval(interval);
   }, []);
 
