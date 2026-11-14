@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '../../contexts/AuthContext';
 import Sidebar from '../../components/Sidebar';
 import Topbar from '../../components/Topbar';
@@ -58,6 +58,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   const showTrialBanner = trialInfo?.isTrialActive;
+  const pathname = usePathname();
+  const isWhatsApp = pathname === '/dashboard/whatsapp';
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
@@ -75,8 +77,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         )}
         <Topbar />
-        <main className="flex-1 relative overflow-y-auto focus:outline-none">
-          <div className="py-8 px-6 sm:px-8">
+        <main className={`flex-1 relative focus:outline-none ${isWhatsApp ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
+          <div className={isWhatsApp ? 'flex-1 h-full p-0 sm:p-4 lg:p-6 flex flex-col min-h-0' : 'p-4 sm:p-6 lg:p-8'}>
             {children}
           </div>
         </main>
